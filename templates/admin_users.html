@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="text-white">Admin Panel: All Registered Users</h2>
+<table class="table table-dark table-bordered table-hover">
+  <thead>
+    <tr>
+      <th>ID</th><th>Last Name</th><th>Rank</th><th>Squad</th><th>Admin</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td>{{ user.id }}</td>
+      <td>{{ user.last_name }}</td>
+      <td>{{ user.rank }}</td>
+      <td>{{ user.squad }}</td>
+      <td>{{ 'Yes' if user.is_admin else 'No' }}</td>
+      <td>
+        <a href="/admin/edit/{{ user.id }}" class="btn btn-sm btn-warning">Edit</a>
+        <a href="/admin/delete/{{ user.id }}" class="btn btn-sm btn-danger" onclick="return confirm('Delete this user?')">Delete</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

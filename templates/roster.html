@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Roster</h2>
+{% for squad, members in squads.items() %}
+  <h3>{{ squad }}</h3>
+  <div class="card bg-secondary text-white mb-3 p-3">
+    {% for m in members %}
+      <p><strong>{{ m.rank }} {{ m.last_name }}</strong> - {{ m.status }}</p>
+    {% endfor %}
+  </div>
+{% endfor %}
+<h4>Status Summary:</h4>
+<ul>
+  {% for s, count in summary.items() %}
+    <li>{{ s }}: {{ count }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

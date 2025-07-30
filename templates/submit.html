@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Submit PERSTAT for Tomorrow</h2>
+<form method="post">
+  <div class="mb-3">
+    <label class="form-label">Status</label>
+    <select name="status" class="form-select bg-dark text-white">
+      <option>Present</option>
+      <option>Leave</option>
+      <option>Gym detail</option>
+      <option>Hospital</option>
+      <option>School</option>
+      <option>LWC</option>
+      <option>Comp</option>
+      <option>BMM</option>
+      <option>Appointment</option>
+    </select>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Comment</label>
+    <input type="text" name="comment" class="form-control bg-dark text-white" placeholder="Optional comment">
+  </div>
+  <button class="btn btn-success">Submit</button>
+</form>
+{% endblock %}
