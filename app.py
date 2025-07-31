@@ -107,7 +107,7 @@ def roster():
     messages = db.execute("SELECT * FROM messages ORDER BY created_at DESC LIMIT 3").fetchall()
     summary = {}
     status_by_user = {s['user_id']: s for s in statuses}
-    squads = {'1st Squad': [], '2nd Squad': []}
+    squads = {}
     for user in users:
         uid = user['id']
         squad = user['squad']
@@ -115,7 +115,7 @@ def roster():
         row = status_by_user.get(uid)
         user_data['status'] = row['status'] if row else 'Not Submitted'
         summary[user_data['status']] = summary.get(user_data['status'], 0) + 1
-        squads[squad].append(user_data)
+        squads.setdefault(squad, []).append(user_data)
     return render_template('roster.html', squads=squads, summary=summary, messages=messages, is_admin=session.get('is_admin'))
 
 @app.route('/admin/users')
