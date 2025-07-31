@@ -16,3 +16,11 @@ CREATE TABLE perstat (
     comment TEXT,
     FOREIGN KEY (user_id) REFERENCES users (id)
 );
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_id INTEGER,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (author_id) REFERENCES users(id)
+);

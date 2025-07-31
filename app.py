@@ -104,6 +104,7 @@ def roster():
     today = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
     users = db.execute('SELECT * FROM users').fetchall()
     statuses = db.execute('SELECT * FROM perstat WHERE date = ?', (today,)).fetchall()
+    messages = db.execute("SELECT * FROM messages ORDER BY created_at DESC LIMIT 3").fetchall()
     summary = {}
     status_by_user = {s['user_id']: s for s in statuses}
     squads = {'1st Squad': [], '2nd Squad': []}
@@ -115,7 +116,7 @@ def roster():
         user_data['status'] = row['status'] if row else 'Not Submitted'
         summary[user_data['status']] = summary.get(user_data['status'], 0) + 1
         squads[squad].append(user_data)
-    return render_template('roster.html', squads=squads, summary=summary, is_admin=session.get('is_admin'))
+    return render_template('roster.html', squads=squads, summary=summary, messages=messages, is_admin=session.get('is_admin'))
 
 @app.route('/admin/users')
 @login_required
@@ -125,6 +126,37 @@ def view_users():
     db = get_db()
     users = db.execute('SELECT * FROM users').fetchall()
     return render_template('admin_users.html', users=users)
+
+@app.route('/messages')
+@login_required
+def view_messages():
+    db = get_db()
+    messages = db.execute('SELECT * FROM messages ORDER BY created_at DESC').fetchall()
+    return render_template('messages.html', messages=messages, is_admin=session.get('is_admin'))
+
+@app.route('/messages/new', methods=['POST'])
+@login_required
+def post_message():
+    if not session.get('is_admin'):
+        return redirect(url_for('view_messages'))
+    title = request.form['title']
+    content = request.form['content']
+    created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    db = get_db()
+    db.execute("INSERT INTO messages (author_id, title, content, created_at) VALUES (?, ?, ?, ?)",
+               (session['user_id'], title, content, created_at))
+    db.commit()
+    return redirect(url_for('view_messages'))
+
+@app.route('/messages/delete/<int:msg_id>', methods=['POST'])
+@login_required
+def delete_message(msg_id):
+    if not session.get('is_admin'):
+        return redirect(url_for('view_messages'))
+    db = get_db()
+    db.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+    db.commit()
+    return redirect(url_for('view_messages'))
 
 @app.route('/logout')
 def logout():
