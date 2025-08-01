@@ -1,15 +1,17 @@
-# flyctl launch added from .gitignore
-# Ignore Python cache
-**\__pycache__
-**\*.pyc
-
-# Ignore local SQLite DB
-**\instance\*.db
-
-# Ignore OS files
-**\.DS_Store
-
-# Optional: VSCode or editor config
-**\.vscode
-**\.env
-fly.toml
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+.env
+.venv/
+*.log
+.git/
+.gitignore
+*.zip
+*.tar
+*.gz
+*.tgz
+.DS_Store
+node_modules/

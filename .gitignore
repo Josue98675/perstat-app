@@ -1,13 +1,18 @@
-# Ignore Python cache
 __pycache__/
 *.pyc
-
-# Ignore local SQLite DB
-instance/*.db
-
-# Ignore OS files
-.DS_Store
-
-# Optional: VSCode or editor config
-.vscode/
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+instance/
 .env
+.venv/
+*.log
+.git
+.gitignore
+*.zip
+*.tar
+*.gz
+*.tgz
+.DS_Store
+node_modules/
