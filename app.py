@@ -268,6 +268,8 @@ def generate_ai_summary():
     conn = get_db()
     cur = conn.cursor()
     tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Get all squads
     cur.execute("SELECT DISTINCT squad FROM users")
     squads = [row['squad'] for row in cur.fetchall()]
 
@@ -289,17 +291,24 @@ def generate_ai_summary():
         summary_lines.append(f"{squad} Squad ({total}): {status_summary}")
 
     overall = '\n'.join(summary_lines)
+
+    # ✅ Save new AI summary
     cur.execute('''
         INSERT INTO ai_summaries (date, summary, created_at)
         VALUES (%s, %s, %s)
         ON CONFLICT (date) DO UPDATE SET summary = EXCLUDED.summary
     ''', (tomorrow, overall, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
+    # 🔁 Clear statuses for tomorrow (reset roster)
     cur.execute('DELETE FROM perstat WHERE date = %s', (tomorrow,))
+
+    # 🧹 Delete AI summaries older than 2 days
+    two_days_ago = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+    cur.execute('DELETE FROM ai_summaries WHERE date < %s', (two_days_ago,))
+
     conn.commit()
     cur.close()
 
-# ---------------------- PWA ----------------------
 @app.route('/manifest.json')
 def manifest():
     return app.send_static_file('manifest.json')
