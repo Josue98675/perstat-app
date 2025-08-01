@@ -22,7 +22,7 @@
       <td>{{ 'Yes' if user.is_admin else 'No' }}</td>
       <td>
         <a href="/admin/edit/{{ user.id }}" class="btn btn-sm btn-warning">Edit</a>
-        <form action="/admin/delete_user/{{ user.id }}" method="POST" style="display:inline;">
+        <form action="{{ url_for('delete_user', user_id=user.id) }}" method="POST" style="display:inline;">
           <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this user?')">Delete</button>
         </form>
       </td>
