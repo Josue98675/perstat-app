@@ -336,5 +336,10 @@ if os.environ.get('AUTO_INIT_DB') == 'true':
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
 
+if __name__ == '__main__':
+    # Only run Flask's dev server if not running under gunicorn
+    if os.environ.get("FLY_APP_NAME") is None:
+        app.run(host='0.0.0.0', port=8080)
+
 
 
