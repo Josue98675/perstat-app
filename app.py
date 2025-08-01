@@ -1,9 +1,14 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, render_template, request, redirect, session, url_for, g, flash, Response
 import psycopg2, os, csv
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from functools import wraps
 from email_utils import send_reminder_email
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
@@ -61,6 +66,18 @@ def register():
             return render_template('register.html')
 
     return render_template('register.html')
+
+@app.route('/robots.txt')
+def robots_txt():
+    return "User-agent: *\nDisallow: /", 200, {'Content-Type': 'text/plain'}
+
+
+@app.before_request
+def enforce_https_in_production():
+    if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
+        url = request.url.replace('http://', 'https://', 1)
+        return redirect(url)
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -147,6 +164,17 @@ def roster():
         summary[user_data['status']] = summary.get(user_data['status'], 0) + 1
         squads.setdefault(squad, []).append(user_data)
     return render_template('roster.html', squads=squads, summary=summary, messages=messages, is_admin=session.get('is_admin'))
+
+@app.route('/admin/generate_summary')
+@login_required
+def manual_generate_summary():
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+
+    generate_ai_summary()
+    flash("✅ AI Summary generated.")
+    return redirect(url_for('roster'))
+
 
 @app.route('/messages')
 @login_required
@@ -258,6 +286,59 @@ def delete_user(user_id):
     cur.close()
     flash("User deleted.")
     return redirect(url_for('view_users'))
+
+@app.route('/ai_summary')
+@login_required
+def ai_summary():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ai_summaries ORDER BY date DESC")
+    summaries = cur.fetchall()
+    cur.close()
+    return render_template('ai_summary.html', summaries=summaries)
+
+def generate_ai_summary():
+    conn = get_db()
+    cur = conn.cursor()
+
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Get all squads
+    cur.execute("SELECT DISTINCT squad FROM users")
+    squads = [row['squad'] for row in cur.fetchall()]
+
+    summary_lines = []
+
+    for squad in squads:
+        cur.execute('''
+            SELECT u.rank, u.last_name, p.status
+            FROM users u
+            LEFT JOIN perstat p ON u.id = p.user_id AND p.date = %s
+            WHERE u.squad = %s
+        ''', (tomorrow, squad))
+
+        data = cur.fetchall()
+        total = len(data)
+        status_count = {}
+
+        for row in data:
+            status = row['status'] if row['status'] else 'Not Submitted'
+            status_count[status] = status_count.get(status, 0) + 1
+
+        # Capitalize full status words (e.g., Present, Leave, Hospital)
+        status_summary = ', '.join([f"{k.capitalize()}-{v}" for k, v in status_count.items()])
+
+        summary_lines.append(f"{squad} Squad ({total}): {status_summary}")
+
+    overall = '\n'.join(summary_lines)
+    cur.execute('''
+        INSERT INTO ai_summaries (date, summary, created_at)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (date) DO UPDATE SET summary = EXCLUDED.summary
+    ''', (tomorrow, overall, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+
+    conn.commit()
+    cur.close()
 
 # ✅ PWA Routes
 @app.route('/manifest.json')
