@@ -36,3 +36,7 @@ primary_region = 'iad'
 [[cron]]
   schedule = "0 20 * * *"
   command = "cron"
+
+[processes]
+app = "gunicorn app:app"
+summary = "python generate_summary_task.py"
