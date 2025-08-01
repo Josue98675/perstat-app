@@ -1,26 +1,25 @@
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS perstat;
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
     last_name TEXT NOT NULL,
     rank TEXT NOT NULL,
     pin TEXT NOT NULL,
     squad TEXT NOT NULL,
-    is_admin INTEGER DEFAULT 0
+    is_admin BOOLEAN DEFAULT FALSE
 );
-CREATE TABLE perstat (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
+
+CREATE TABLE IF NOT EXISTS perstat (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    date DATE NOT NULL,
     status TEXT NOT NULL,
-    comment TEXT,
-    FOREIGN KEY (user_id) REFERENCES users (id)
+    comment TEXT
 );
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    author_id INTEGER,
+
+CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    author_id INTEGER REFERENCES users(id),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (author_id) REFERENCES users(id)
+    created_at TIMESTAMP NOT NULL
 );

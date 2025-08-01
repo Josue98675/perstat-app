@@ -1,16 +1,15 @@
 from flask import Flask, render_template, request, redirect, session, url_for, g, flash
-import sqlite3, os
+import psycopg2, os
 from datetime import datetime, timedelta
 from functools import wraps
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
-DATABASE = os.path.join('instance', 'perstat.db')
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_db():
     if 'db' not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
+        g.db = psycopg2.connect(DATABASE_URL)
     return g.db
 
 @app.teardown_appcontext
@@ -19,16 +18,6 @@ def close_db(error):
     if db is not None:
         db.close()
 
-def init_db():
-    with app.app_context():
-        db = get_db()
-        with open('schema.sql', 'r') as f:
-            db.executescript(f.read())
-        print("✅ Database initialized")
-
-if not os.path.exists(DATABASE):
-    os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-    init_db()
 
 def login_required(f):
     @wraps(f)
@@ -165,3 +154,17 @@ def logout():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+def init_db():
+    with app.app_context():
+        conn = get_db()
+        cur = conn.cursor()
+        with open('schema.sql', 'r') as f:
+            cur.execute(f.read())
+        conn.commit()
+        cur.close()
+
+# Auto-run only in development or if a flag is set
+if os.environ.get('AUTO_INIT_DB') == 'true':
+    init_db()
