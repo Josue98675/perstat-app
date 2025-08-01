@@ -4,7 +4,12 @@
 <table class="table table-dark table-bordered table-hover">
   <thead>
     <tr>
-      <th>ID</th><th>Last Name</th><th>Rank</th><th>Squad</th><th>Admin</th><th>Actions</th>
+      <th>ID</th>
+      <th>Last Name</th>
+      <th>Rank</th>
+      <th>Squad</th>
+      <th>Admin</th>
+      <th>Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -17,7 +22,9 @@
       <td>{{ 'Yes' if user.is_admin else 'No' }}</td>
       <td>
         <a href="/admin/edit/{{ user.id }}" class="btn btn-sm btn-warning">Edit</a>
-        <a href="/admin/delete/{{ user.id }}" class="btn btn-sm btn-danger" onclick="return confirm('Delete this user?')">Delete</a>
+        <form action="/admin/delete_user/{{ user.id }}" method="POST" style="display:inline;">
+          <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete this user?')">Delete</button>
+        </form>
       </td>
     </tr>
     {% endfor %}
