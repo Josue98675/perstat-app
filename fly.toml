@@ -38,8 +38,9 @@ primary_region = "iad"
     handlers = ["tls", "http"]
 
 [processes]
-  app = "gunicorn app:app"
+  app = "gunicorn -w 4 -b 0.0.0.0:8080 app:app"
   summary = "python generate_summary_task.py"
+
 
 [[cron]]
   schedule = "0 20 * * *"
