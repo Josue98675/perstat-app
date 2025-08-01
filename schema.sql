@@ -1,13 +1,21 @@
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     last_name TEXT NOT NULL,
     rank TEXT NOT NULL,
     pin TEXT NOT NULL,
     squad TEXT NOT NULL,
-    is_admin INTEGER DEFAULT 0
+    is_admin INTEGER DEFAULT 0,
+    email TEXT
 );
 
-CREATE TABLE IF NOT EXISTS perstat (
+CREATE TABLE ai_summaries (
+    id SERIAL PRIMARY KEY,
+    date TEXT NOT NULL UNIQUE,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE perstat (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     date TEXT NOT NULL,
@@ -16,7 +24,7 @@ CREATE TABLE IF NOT EXISTS perstat (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE messages (
     id SERIAL PRIMARY KEY,
     author_id INTEGER,
     title TEXT NOT NULL,
@@ -25,4 +33,3 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (author_id) REFERENCES users(id)
 );
 
-ALTER TABLE users ADD COLUMN email TEXT;

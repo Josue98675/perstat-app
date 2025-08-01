@@ -9,12 +9,11 @@ from functools import wraps
 from email_utils import send_reminder_email
 from werkzeug.security import generate_password_hash, check_password_hash
 
-
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
-
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
+# ---------------------- Database ----------------------
 def get_db():
     if 'db' not in g:
         g.db = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -26,6 +25,7 @@ def close_db(error):
     if db is not None:
         db.close()
 
+# ---------------------- Helpers ----------------------
 def login_required(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
@@ -34,6 +34,12 @@ def login_required(f):
         return f(*args, **kwargs)
     return wrapped
 
+@app.before_request
+def enforce_https_in_production():
+    if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
+        return redirect(request.url.replace('http://', 'https://', 1))
+
+# ---------------------- Routes ----------------------
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -43,19 +49,16 @@ def register():
     if request.method == 'POST':
         last_name = request.form['last_name'].strip().lower()
         rank = request.form['rank'].strip().upper()
-        pin = request.form['pin'].strip()
+        pin = generate_password_hash(request.form['pin'].strip())
         squad = request.form['squad']
         email = request.form.get('email')
-        admin_ranks = ["SGT", "SSG", "SFC", "MSG", "1SG", "SGM", "CSM", "SMA", "2LT", "1LT", "LT", "CPT"]
-        is_admin = rank in admin_ranks
+        is_admin = rank in ["SGT", "SSG", "SFC", "MSG", "1SG", "SGM", "CSM", "SMA", "2LT", "1LT", "LT", "CPT"]
 
         try:
             conn = get_db()
             cur = conn.cursor()
-            cur.execute(
-                'INSERT INTO users (last_name, rank, pin, squad, is_admin, email) VALUES (%s, %s, %s, %s, %s, %s)',
-                (last_name, rank, pin, squad, is_admin, email)
-            )
+            cur.execute('INSERT INTO users (last_name, rank, pin, squad, is_admin, email) VALUES (%s, %s, %s, %s, %s, %s)',
+                        (last_name, rank, pin, squad, is_admin, email))
             conn.commit()
             cur.close()
             flash('Registration successful!')
@@ -63,50 +66,36 @@ def register():
         except Exception as e:
             print("❌ Registration Error:", e)
             flash('Registration failed.')
-            return render_template('register.html')
-
     return render_template('register.html')
-
-@app.route('/robots.txt')
-def robots_txt():
-    return "User-agent: *\nDisallow: /", 200, {'Content-Type': 'text/plain'}
-
-
-@app.before_request
-def enforce_https_in_production():
-    if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
-        url = request.url.replace('http://', 'https://', 1)
-        return redirect(url)
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         last_name = request.form['last_name'].strip().lower()
         rank = request.form['rank'].strip().upper()
-        pin = request.form['pin'].strip()
+        entered_pin = request.form['pin'].strip()
 
         try:
             conn = get_db()
             cur = conn.cursor()
-            cur.execute(
-                'SELECT id, is_admin FROM users WHERE LOWER(last_name) = %s AND UPPER(rank) = %s AND pin = %s',
-                (last_name, rank, pin)
-            )
+            cur.execute('SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s AND UPPER(rank) = %s',
+                        (last_name, rank))
             user = cur.fetchone()
             cur.close()
-
-            if user:
+            if user and check_password_hash(user['pin'], entered_pin):
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 return redirect(url_for('roster'))
-            else:
-                flash('Login failed.')
+            flash('Login failed.')
         except Exception as e:
             print("❌ Login Error:", e)
             flash('Login failed due to internal error.')
-
     return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 @app.route('/submit', methods=['GET', 'POST'])
 @login_required
@@ -119,9 +108,7 @@ def submit():
         conn = get_db()
         cur = conn.cursor()
 
-        ten_days_ago = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
-        cur.execute('DELETE FROM perstat WHERE date < %s', (ten_days_ago,))
-
+        cur.execute('DELETE FROM perstat WHERE date < %s', ((datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d'),))
         cur.execute('SELECT * FROM perstat WHERE user_id = %s AND date = %s', (user_id, date))
         existing = cur.fetchone()
 
@@ -131,7 +118,6 @@ def submit():
         else:
             cur.execute('INSERT INTO perstat (user_id, date, status, comment) VALUES (%s, %s, %s, %s)',
                         (user_id, date, status, comment))
-
         conn.commit()
         cur.close()
         flash('Submitted successfully!')
@@ -165,24 +151,12 @@ def roster():
         squads.setdefault(squad, []).append(user_data)
     return render_template('roster.html', squads=squads, summary=summary, messages=messages, is_admin=session.get('is_admin'))
 
-@app.route('/admin/generate_summary')
-@login_required
-def manual_generate_summary():
-    if not session.get('is_admin'):
-        return redirect(url_for('roster'))
-
-    generate_ai_summary()
-    flash("✅ AI Summary generated.")
-    return redirect(url_for('roster'))
-
-
 @app.route('/messages')
 @login_required
 def view_messages():
     conn = get_db()
     cur = conn.cursor()
-    one_day_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-    cur.execute('DELETE FROM messages WHERE created_at < %s', (one_day_ago,))
+    cur.execute('DELETE FROM messages WHERE created_at < %s', ((datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'),))
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC')
     messages = cur.fetchall()
     conn.commit()
@@ -222,7 +196,6 @@ def delete_message(msg_id):
 def export_perstat():
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
-
     conn = get_db()
     cur = conn.cursor()
     cur.execute('''
@@ -235,7 +208,7 @@ def export_perstat():
     cur.close()
 
     def generate():
-        yield ','.join(['Last Name', 'Rank', 'Squad', 'Date', 'Status', 'Comment']) + '\n'
+        yield 'Last Name,Rank,Squad,Date,Status,Comment\n'
         for row in rows:
             yield ','.join([str(row['last_name']), row['rank'], row['squad'], row['date'], row['status'], row['comment'] or '']) + '\n'
 
@@ -246,18 +219,13 @@ def export_perstat():
 def send_reminders():
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
-
     conn = get_db()
     cur = conn.cursor()
     cur.execute('SELECT email, last_name FROM users WHERE email IS NOT NULL')
     users = cur.fetchall()
     cur.close()
 
-    success = 0
-    for u in users:
-        if send_reminder_email(u['email'], u['last_name']):
-            success += 1
-
+    success = sum(1 for u in users if send_reminder_email(u['email'], u['last_name']))
     flash(f'Sent {success} reminder emails.')
     return redirect(url_for('view_users'))
 
@@ -278,7 +246,6 @@ def view_users():
 def delete_user(user_id):
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
-
     conn = get_db()
     cur = conn.cursor()
     cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
@@ -300,15 +267,11 @@ def ai_summary():
 def generate_ai_summary():
     conn = get_db()
     cur = conn.cursor()
-
     tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-
-    # Get all squads
     cur.execute("SELECT DISTINCT squad FROM users")
     squads = [row['squad'] for row in cur.fetchall()]
 
     summary_lines = []
-
     for squad in squads:
         cur.execute('''
             SELECT u.rank, u.last_name, p.status
@@ -316,18 +279,13 @@ def generate_ai_summary():
             LEFT JOIN perstat p ON u.id = p.user_id AND p.date = %s
             WHERE u.squad = %s
         ''', (tomorrow, squad))
-
         data = cur.fetchall()
         total = len(data)
         status_count = {}
-
         for row in data:
             status = row['status'] if row['status'] else 'Not Submitted'
             status_count[status] = status_count.get(status, 0) + 1
-
-        # Capitalize full status words (e.g., Present, Leave, Hospital)
         status_summary = ', '.join([f"{k.capitalize()}-{v}" for k, v in status_count.items()])
-
         summary_lines.append(f"{squad} Squad ({total}): {status_summary}")
 
     overall = '\n'.join(summary_lines)
@@ -337,10 +295,11 @@ def generate_ai_summary():
         ON CONFLICT (date) DO UPDATE SET summary = EXCLUDED.summary
     ''', (tomorrow, overall, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
+    cur.execute('DELETE FROM perstat WHERE date = %s', (tomorrow,))
     conn.commit()
     cur.close()
 
-# ✅ PWA Routes
+# ---------------------- PWA ----------------------
 @app.route('/manifest.json')
 def manifest():
     return app.send_static_file('manifest.json')
@@ -353,11 +312,7 @@ def service_worker():
 def register_sw():
     return app.send_static_file('register_sw.js')
 
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
+# ---------------------- Init DB ----------------------
 if os.environ.get('AUTO_INIT_DB') == 'true':
     def init_db():
         with app.app_context():

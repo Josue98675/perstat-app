@@ -20,3 +20,19 @@ primary_region = 'iad'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+
+[[statics]]
+  guest_path = "/app/static"
+  url_prefix = "/static"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+[[processes]]
+  app = "gunicorn app:app"
+  cron = "python generate_summary_task.py"
+
+[[cron]]
+  schedule = "0 20 * * *"
+  command = "cron"

@@ -27,14 +27,15 @@
   <div class="container-fluid">
     <a class="navbar-brand text-white" href="/">PERSTAT</a>
     <div class="navbar-nav d-flex flex-row flex-wrap w-100 justify-content-start">
-      <a class="nav-link text-white" href="/submit">Submit PERSTAT</a>
-      <a class="nav-link text-white" href="/roster">Roster</a>
-      <a class="nav-link text-white" href="/messages">Notifications</a>
-      {% if session.get('is_admin') %}
-      <a class="nav-link text-white" href="/admin/users">Admin Panel</a>
-      {% endif %}
       {% if session.get('user_id') %}
-      <a class="nav-link text-white" href="/logout">Logout</a>
+        <a class="nav-link text-white" href="/submit">Submit PERSTAT</a>
+        <a class="nav-link text-white" href="/roster">Roster</a>
+        <a class="nav-link text-white" href="/messages">Notifications</a>
+        <a class="nav-link text-white" href="/ai_summary">AI Summary</a>
+        {% if session.get('is_admin') %}
+        <a class="nav-link text-white" href="/admin/users">Admin Panel</a>
+        {% endif %}
+        <a class="nav-link text-white" href="/logout">Logout</a>
       {% endif %}
     </div>
   </div>
@@ -52,3 +53,4 @@
 </div>
 </body>
 </html>
+

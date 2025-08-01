@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h2 class="text-white">🧠 AI-Generated PERSTAT Summaries</h2>
+  {% if summaries %}
+    <div class="accordion accordion-flush" id="summaryAccordion">
+      {% for summary in summaries %}
+      <div class="accordion-item bg-dark text-white border-white">
+        <h2 class="accordion-header" id="heading{{ loop.index }}">
+          <button class="accordion-button collapsed bg-secondary text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}" aria-expanded="false" aria-controls="collapse{{ loop.index }}">
+            {{ summary.date }} — Generated @ {{ summary.created_at }}
+          </button>
+        </h2>
+        <div id="collapse{{ loop.index }}" class="accordion-collapse collapse" aria-labelledby="heading{{ loop.index }}" data-bs-parent="#summaryAccordion">
+          <div class="accordion-body">
+            <pre class="text-white">{{ summary.summary }}</pre>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-warning">No summaries generated yet.</p>
+  {% endif %}
+</div>
+{% endblock %}
