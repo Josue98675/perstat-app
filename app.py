@@ -245,6 +245,20 @@ def view_users():
     cur.close()
     return render_template('admin_users.html', users=users)
 
+@app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
+@login_required
+def delete_user(user_id):
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    cur.close()
+    flash("User deleted.")
+    return redirect(url_for('view_users'))
+
 # ✅ PWA Routes
 @app.route('/manifest.json')
 def manifest():
@@ -276,4 +290,5 @@ if os.environ.get('AUTO_INIT_DB') == 'true':
 
 if __name__ == '__main__':
     app.run(debug=True)
+
 
