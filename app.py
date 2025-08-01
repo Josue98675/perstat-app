@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from functools import wraps
 from email_utils import send_reminder_email
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
+from pywebpush import webpush, WebPushException
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
@@ -268,6 +270,38 @@ def generate_ai_summary():
     conn = get_db()
     cur = conn.cursor()
     tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
+VAPID_CLAIMS = {"sub": "mailto:admin@yourapp.com"}
+
+subscriptions = []  # replace this with a DB or session store in production
+
+@app.route('/subscribe', methods=['POST'])
+def subscribe():
+    data = request.get_json()
+    subscriptions.append(data)
+    return '', 201
+
+@app.route('/admin/push_notify', methods=['POST'])
+@login_required
+def push_notify():
+    if not session.get('is_admin'):
+        return "Unauthorized", 403
+    payload = json.dumps({
+        "title": request.form['title'],
+        "body": request.form['body']
+    })
+    for sub in subscriptions:
+        try:
+            webpush(subscription_info=sub,
+                    data=payload,
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims=VAPID_CLAIMS)
+        except WebPushException as ex:
+            print("Push failed:", repr(ex))
+    return redirect(url_for('view_messages'))
+
 
     # Get all squads
     cur.execute("SELECT DISTINCT squad FROM users")

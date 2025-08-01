@@ -3,14 +3,14 @@
 <h2 class="text-white mb-4">NCO Notifications</h2>
 
 {% if is_admin %}
-<form method="post" action="/messages/new" class="mb-4">
+<form method="post" action="/messages/new" class="mb-4" id="notifyForm">
   <div class="mb-3">
     <input type="text" name="title" class="form-control bg-dark text-white" placeholder="Message Title" required>
   </div>
   <div class="mb-3">
     <textarea name="content" class="form-control bg-dark text-white" placeholder="Type your message here..." rows="4" required></textarea>
   </div>
-  <button class="btn btn-primary">Send Notification</button>
+  <button type="submit" class="btn btn-primary">Send Notification</button>
 </form>
 {% endif %}
 
@@ -31,3 +31,27 @@
 </div>
 {% endfor %}
 {% endblock %}
+
+{% if is_admin %}
+<script>
+document.getElementById("notifyForm").addEventListener("submit", async function(event) {
+  const form = event.target;
+  const title = form.querySelector('input[name="title"]').value;
+  const body = form.querySelector('textarea[name="content"]').value;
+
+  // Fire push notification in background
+  try {
+    await fetch("/admin/push_notify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ title, body })
+    });
+    console.log("✅ Push sent");
+  } catch (err) {
+    console.error("❌ Push failed", err);
+  }
+});
+</script>
+{% endif %}

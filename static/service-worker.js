@@ -13,3 +13,27 @@ self.addEventListener('fetch', event => {
       .then(response => response || fetch(event.request))
   );
 });
+
+self.addEventListener('push', function(event) {
+  const data = event.data.json();
+  const title = data.title || "PERSTAT Notification";
+  const options = {
+    body: data.body,
+    icon: '/static/icon.png', // optional icon
+    badge: '/static/badge.png' // optional badge
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("push", function(event) {
+  const data = event.data.json();
+  const options = {
+    body: data.body,
+    icon: "/static/icon.png",  // Optional icon
+    vibrate: [200, 100, 200],
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});

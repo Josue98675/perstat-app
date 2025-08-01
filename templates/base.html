@@ -5,7 +5,7 @@
   <title>PERSTAT</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  
+
   <!-- ✅ PWA support -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
   <script src="{{ url_for('static', filename='register_sw.js') }}"></script>
@@ -21,6 +21,33 @@
       font-weight: bold;
     }
   </style>
+
+  <script>
+    if ("serviceWorker" in navigator && "PushManager" in window) {
+      navigator.serviceWorker.register("/service-worker.js").then(swReg => {
+        console.log("✅ Service Worker Registered");
+
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            swReg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: "BBIiXehceB34E3--krixHOuN9c-vT_dzcb_WG2NUjW6qcE5Vk-5Chy74YzyLad4RHKPswk7RAkMR0qVwUgb5mjs"
+            }).then(subscription => {
+              fetch("/subscribe", {
+                method: "POST",
+                body: JSON.stringify(subscription),
+                headers: {
+                  "Content-Type": "application/json"
+                }
+              });
+            });
+          } else {
+            console.warn("❌ Notification permission denied");
+          }
+        });
+      });
+    }
+  </script>
 </head>
 <body class="bg-dark text-white">
 <nav class="navbar navbar-expand bg-black">
@@ -53,4 +80,3 @@
 </div>
 </body>
 </html>
-
