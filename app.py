@@ -181,6 +181,7 @@ def roster():
     cur = conn.cursor()
     tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
 
+    # Fetch all users and their statuses for tomorrow
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
@@ -197,14 +198,15 @@ def roster():
 
     for user in users:
         uid = user['id']
-        squad = user['squad'].strip().lower()  # Normalize squad
+        squad_raw = user['squad'].strip().lower()
         user_data = dict(user)
         row = status_by_user.get(uid)
         user_data['status'] = row['status'] if row else 'Not Submitted'
-        if squad == "1st":
+
+        if squad_raw == "1st":
             squads['1st'].append(user_data)
             summaries['1st'][user_data['status']] = summaries['1st'].get(user_data['status'], 0) + 1
-        elif squad == "2nd":
+        elif squad_raw == "2nd":
             squads['2nd'].append(user_data)
             summaries['2nd'][user_data['status']] = summaries['2nd'].get(user_data['status'], 0) + 1
 
@@ -213,6 +215,7 @@ def roster():
                            summaries=summaries,
                            messages=messages,
                            is_admin=session.get('is_admin'))
+
 
 
 
