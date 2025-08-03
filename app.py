@@ -21,6 +21,22 @@ def get_db():
         g.db = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return g.db
 
+# ✅ Add this directly below
+def all_users_submitted(conn, target_date):
+    cur = conn.cursor()
+
+    # Count total users
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()['count']
+
+    # Count submissions for that date
+    cur.execute("SELECT COUNT(DISTINCT user_id) FROM perstat WHERE date = %s", (target_date,))
+    submitted = cur.fetchone()['count']
+
+    cur.close()
+    return submitted == total_users
+
+
 @app.teardown_appcontext
 def close_db(error):
     db = g.pop('db', None)
@@ -164,26 +180,40 @@ def roster():
     conn = get_db()
     cur = conn.cursor()
     today = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
+
     cur.execute('SELECT * FROM perstat WHERE date = %s', (today,))
     statuses = cur.fetchall()
+
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 3')
     messages = cur.fetchall()
     cur.close()
 
-    summary = {}
     status_by_user = {s['user_id']: s for s in statuses}
-    squads = {}
+    squads = {'1st': [], '2nd': []}
+    summaries = {'1st': {}, '2nd': {}}
+
     for user in users:
         uid = user['id']
         squad = user['squad']
         user_data = dict(user)
         row = status_by_user.get(uid)
         user_data['status'] = row['status'] if row else 'Not Submitted'
-        summary[user_data['status']] = summary.get(user_data['status'], 0) + 1
-        squads.setdefault(squad, []).append(user_data)
-    return render_template('roster.html', squads=squads, summary=summary, messages=messages, is_admin=session.get('is_admin'))
+        if squad == "1st":
+            squads['1st'].append(user_data)
+            summaries['1st'][user_data['status']] = summaries['1st'].get(user_data['status'], 0) + 1
+        elif squad == "2nd":
+            squads['2nd'].append(user_data)
+            summaries['2nd'][user_data['status']] = summaries['2nd'].get(user_data['status'], 0) + 1
+
+    return render_template('roster.html',
+                           squads=squads,
+                           summaries=summaries,
+                           messages=messages,
+                           is_admin=session.get('is_admin'))
+
 
 @app.route('/messages')
 @login_required
@@ -288,6 +318,46 @@ def delete_user(user_id):
     flash("User deleted.")
     return redirect(url_for('view_users'))
 
+@app.route('/admin/edit/<int:user_id>', methods=['GET'])
+@login_required
+def edit_user(user_id):
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    user = cur.fetchone()
+    cur.close()
+    if not user:
+        flash("User not found.")
+        return redirect(url_for('view_users'))
+    return render_template('admin_edit_user.html', user=user)
+
+@app.route('/admin/update/<int:user_id>', methods=['POST'])
+@login_required
+def update_user(user_id):
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+
+    last_name = request.form['last_name'].strip().lower()
+    rank = request.form['rank'].strip().upper()
+    squad = request.form['squad']
+    email = request.form['email']
+    is_admin = rank in ["SGT", "SSG", "SFC", "MSG", "1SG", "SGM", "CSM", "SMA", "2LT", "1LT", "LT", "CPT"]
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE users
+        SET last_name = %s, rank = %s, squad = %s, email = %s, is_admin = %s
+        WHERE id = %s
+    ''', (last_name, rank, squad, email, is_admin, user_id))
+    conn.commit()
+    cur.close()
+    flash("User updated.")
+    return redirect(url_for('view_users'))
+
+
 @app.route('/ai_summary')
 @login_required
 def ai_summary():
@@ -339,7 +409,18 @@ def generate_ai_summary():
     two_days_ago = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
     cur.execute('DELETE FROM ai_summaries WHERE date < %s', (two_days_ago,))
 
-    conn.commit()
+    conn.commit()    # ✅ Send push notification to NCOs if everyone has submitted
+    if all_users_submitted(conn, tomorrow):
+        push_body = f"PERSTAT Summary for {tomorrow}:\n\n{overall}"
+        for sub in subscriptions:
+            try:
+                webpush(subscription_info=sub,
+                        data=json.dumps({"title": "PERSTAT Summary", "body": push_body}),
+                        vapid_private_key=VAPID_PRIVATE_KEY,
+                        vapid_claims=VAPID_CLAIMS)
+            except WebPushException as ex:
+                print("Push failed:", repr(ex))
+
     cur.close()
 
 @app.route('/manifest.json')

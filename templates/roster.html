@@ -1,18 +1,38 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Roster</h2>
-{% for squad, members in squads.items() %}
-  <h3>{{ squad }}</h3>
-  <div class="card bg-secondary text-white mb-3 p-3">
-    {% for m in members %}
-      <p><strong>{{ m.rank }} {{ m.last_name }}</strong> - {{ m.status }}</p>
-    {% endfor %}
-  </div>
-{% endfor %}
-<h4>Status Summary:</h4>
-<ul>
-  {% for s, count in summary.items() %}
-    <li>{{ s }}: {{ count }}</li>
+<h2 class="text-white mb-4">Roster</h2>
+
+<h3 class="text-white">1st Squad</h3>
+<div class="card bg-secondary text-white mb-4 p-3">
+  {% for m in squads['1st'] %}
+    <p><strong>{{ m.rank }} {{ m.last_name }}</strong> - {{ m.status }}</p>
   {% endfor %}
-</ul>
+</div>
+
+<h3 class="text-white">2nd Squad</h3>
+<div class="card bg-secondary text-white mb-4 p-3">
+  {% for m in squads['2nd'] %}
+    <p><strong>{{ m.rank }} {{ m.last_name }}</strong> - {{ m.status }}</p>
+  {% endfor %}
+</div>
+
+<div class="row">
+  <div class="col-md-6">
+    <h4 class="text-white">Status Summary 1st Squad:</h4>
+    <ul>
+      {% for s, count in summaries['1st'].items() %}
+        <li>{{ s }}: {{ count }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="col-md-6">
+    <h4 class="text-white">Status Summary 2nd Squad:</h4>
+    <ul>
+      {% for s, count in summaries['2nd'].items() %}
+        <li>{{ s }}: {{ count }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
 {% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="text-white mb-4">Edit User</h2>
+
+<form method="POST" action="/admin/update/{{ user.id }}">
+  <div class="mb-3">
+    <label class="form-label text-white">Last Name</label>
+    <input type="text" name="last_name" class="form-control" value="{{ user.last_name }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label text-white">Rank</label>
+    <input type="text" name="rank" class="form-control" value="{{ user.rank }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label text-white">Squad</label>
+    <input type="text" name="squad" class="form-control" value="{{ user.squad }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label text-white">Email</label>
+    <input type="email" name="email" class="form-control" value="{{ user.email or '' }}">
+  </div>
+  <button class="btn btn-success">Save Changes</button>
+  <a href="/admin/users" class="btn btn-secondary ms-2">Cancel</a>
+</form>
+{% endblock %}
