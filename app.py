@@ -179,12 +179,12 @@ def submit():
 def roster():
     conn = get_db()
     cur = conn.cursor()
-    today = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
 
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
-    cur.execute('SELECT * FROM perstat WHERE date = %s', (today,))
+    cur.execute('SELECT * FROM perstat WHERE date = %s', (tomorrow,))
     statuses = cur.fetchall()
 
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 3')
@@ -197,7 +197,7 @@ def roster():
 
     for user in users:
         uid = user['id']
-        squad = user['squad']
+        squad = user['squad'].strip().lower()  # Normalize squad
         user_data = dict(user)
         row = status_by_user.get(uid)
         user_data['status'] = row['status'] if row else 'Not Submitted'
@@ -213,6 +213,8 @@ def roster():
                            summaries=summaries,
                            messages=messages,
                            is_admin=session.get('is_admin'))
+
+
 
 
 @app.route('/messages')
