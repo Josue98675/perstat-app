@@ -14,6 +14,12 @@ from pywebpush import webpush, WebPushException
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
 DATABASE_URL = os.environ.get('DATABASE_URL')
+from datetime import timedelta
+
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # Keep login active for 30 days
+app.config['SESSION_COOKIE_SECURE'] = True  # ✅ Ensures cookies only sent over HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # ✅ Allows cross-site cookies (needed for some PWAs)
+
 
 # ---------------------- Database ----------------------
 def get_db():
@@ -127,7 +133,6 @@ def login():
         try:
             conn = get_db()
             cur = conn.cursor()
-            # Name-only lookup (case-insensitive)
             cur.execute(
                 'SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s LIMIT 1',
                 (last_name,)
@@ -136,8 +141,10 @@ def login():
             cur.close()
 
             if user and check_password_hash(user['pin'], entered_pin):
+                # ✅ Save session & keep it permanent
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
+                session.permanent = True  # Keep signed in
                 return redirect(url_for('roster'))
 
             flash('Login failed. Check name & PIN.')
@@ -146,12 +153,6 @@ def login():
             flash('Login failed due to internal error.')
 
     return render_template('login.html')
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
 
 @app.route('/submit', methods=['GET', 'POST'])
 @login_required
