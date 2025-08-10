@@ -8,14 +8,19 @@
     {% set item_id = "s" ~ loop.index %}
     <div class="accordion-item bg-dark text-white">
       <h2 class="accordion-header" id="heading-{{ item_id }}">
-        <button class="accordion-button collapsed bg-secondary text-white" type="button"
-                data-bs-toggle="collapse" data-bs-target="#collapse-{{ item_id }}"
-                aria-expanded="false" aria-controls="collapse-{{ item_id }}">
+        <button class="accordion-button {% if not loop.first %}collapsed{% endif %} bg-secondary text-white"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#collapse-{{ item_id }}"
+                aria-expanded="{{ 'true' if loop.first else 'false' }}"
+                aria-controls="collapse-{{ item_id }}">
           {{ s.date }} — Summary
         </button>
       </h2>
-      <div id="collapse-{{ item_id }}" class="accordion-collapse collapse"
-           aria-labelledby="heading-{{ item_id }}" data-bs-parent="#summaryAccordion">
+      <div id="collapse-{{ item_id }}"
+           class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+           aria-labelledby="heading-{{ item_id }}"
+           data-bs-parent="#summaryAccordion">
         <div class="accordion-body">
           <pre class="mb-0 text-white" style="white-space: pre-wrap;">{{ s.summary }}</pre>
           <small class="text-muted">Created at: {{ s.created_at }}</small>
@@ -26,7 +31,9 @@
 </div>
 {% else %}
   <div class="alert alert-warning">
-    No summaries yet. As an admin, visit <a href="{{ url_for('manual_generate_summary') }}">Generate Summary</a> to create one now.
+    No summaries yet. As an admin, visit
+    <a href="{{ url_for('manual_generate_summary') }}">Generate Summary</a> to create one now.
   </div>
 {% endif %}
 {% endblock %}
+
