@@ -20,6 +20,9 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # Keep login acti
 app.config['SESSION_COOKIE_SECURE'] = True  # ✅ Ensures cookies only sent over HTTPS
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # ✅ Allows cross-site cookies (needed for some PWAs)
 
+@app.context_processor
+def inject_vapid():
+    return {"VAPID_PUBLIC_KEY": os.environ.get("VAPID_PUBLIC_KEY", "")}
 
 # ---------------------- Database ----------------------
 def get_db():
@@ -153,6 +156,16 @@ def login():
             flash('Login failed due to internal error.')
 
     return render_template('login.html')
+
+@app.route('/admin/generate_summary')
+@login_required
+def manual_generate_summary():
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+    generate_ai_summary()
+    flash("✅ AI Summary generated.")
+    return redirect(url_for('ai_summary'))
+
 
 @app.route('/submit', methods=['GET', 'POST'])
 @login_required
