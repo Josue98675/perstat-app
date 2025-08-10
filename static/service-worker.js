@@ -37,3 +37,12 @@ self.addEventListener("push", function(event) {
     self.registration.showNotification(data.title, options)
   );
 });
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data.json(); } catch {}
+  const title = data.title || "PERSTAT";
+  const body = data.body || "New notification";
+  event.waitUntil(self.registration.showNotification(title, { body, icon: "/static/icon-192.png" }));
+});
+

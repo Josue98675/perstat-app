@@ -21,58 +21,25 @@
       font-weight: bold;
     }
   </style>
-
-  <!-- ✅ Push Notification Setup with Debug Logging -->
-  <script>
-    if ("serviceWorker" in navigator && "PushManager" in window) {
-      navigator.serviceWorker.register("/service-worker.js").then(swReg => {
-        console.log("✅ Service Worker Registered");
-
-        Notification.requestPermission().then(permission => {
-          console.log("🔔 Permission status:", permission);
-          if (permission === "granted") {
-            swReg.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: "BBIiXehceB34E3--krixHOuN9c-vT_dzcb_WG2NUjW6qcE5Vk-5Chy74YzyLad4RHKPswk7RAkMR0qVwUgb5mjs"
-            }).then(subscription => {
-              console.log("📬 Subscribed to push:", subscription);
-              return fetch("/subscribe", {
-                method: "POST",
-                body: JSON.stringify(subscription),
-                headers: {
-                  "Content-Type": "application/json"
-                }
-              });
-            }).then(() => {
-              console.log("✅ Push subscription sent to server");
-            }).catch(err => {
-              console.error("❌ Push subscription failed", err);
-            });
-          } else {
-            console.warn("❌ Notification permission denied");
-          }
-        });
-      }).catch(err => {
-        console.error("❌ Service Worker registration failed", err);
-      });
-    }
-  </script>
 </head>
 
 <body class="bg-dark text-white">
   <nav class="navbar navbar-expand bg-black">
     <div class="container-fluid">
       <a class="navbar-brand text-white" href="/">PERSTAT</a>
-      <div class="navbar-nav d-flex flex-row flex-wrap w-100 justify-content-start">
+      <div class="navbar-nav d-flex flex-row flex-wrap w-100 align-items-center">
         {% if session.get('user_id') %}
           <a class="nav-link text-white" href="/submit">Submit PERSTAT</a>
           <a class="nav-link text-white" href="/roster">Roster</a>
           <a class="nav-link text-white" href="/messages">Notifications</a>
           <a class="nav-link text-white" href="/ai_summary">AI Summary</a>
           {% if session.get('is_admin') %}
-          <a class="nav-link text-white" href="/admin/users">Admin Panel</a>
+            <a class="nav-link text-white" href="/admin/users">Admin Panel</a>
           {% endif %}
           <a class="nav-link text-white" href="/logout">Logout</a>
+
+          <!-- ✅ Manual enable button for iOS/Safari reliability -->
+          <button id="enablePush" class="btn btn-sm btn-primary ms-2">Enable Notifications</button>
         {% endif %}
       </div>
     </div>
@@ -88,6 +55,67 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </div>
+
+  <!-- ✅ Push subscription logic (safe for iOS; requires user tap) -->
+  <script>
+    // Helper: convert base64 (URL-safe) to Uint8Array for PushManager
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    async function enableNotifications() {
+      try {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+          alert("Push not supported on this device/browser.");
+          return;
+        }
+
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          alert("Notifications were blocked. Enable them in your browser settings.");
+          return;
+        }
+
+        const reg = await navigator.serviceWorker.register("/service-worker.js");
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array("{{ VAPID_PUBLIC_KEY }}")
+        });
+
+        await fetch("/subscribe", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(sub)
+        });
+
+        console.log("✅ Subscribed to push:", sub);
+        alert("Notifications enabled!");
+      } catch (err) {
+        console.error("❌ Failed to enable notifications", err);
+        alert("Could not enable notifications. Try again or check console.");
+      }
+    }
+
+    // Wire up the button (user gesture required on iOS)
+    const btn = document.getElementById("enablePush");
+    if (btn) btn.addEventListener("click", enableNotifications);
+
+    // Optional: register SW on load (don’t auto-ask permission)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js").then(() => {
+        console.log("Service worker registered");
+      }).catch(err => {
+        console.error("SW registration failed", err);
+      });
+    }
+  </script>
 </body>
 </html>
 
