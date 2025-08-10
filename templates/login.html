@@ -1,20 +1,12 @@
-{% extends "base.html" %}
-{% block content %}
-<h2>Login</h2>
-<form method="post">
+<form method="post" class="mt-4" autocomplete="off">
   <div class="mb-3">
-    <label class="form-label">Last Name</label>
-    <input type="text" name="last_name" class="form-control bg-dark text-white" placeholder="Last Name">
-  </div>
-  <div class="mb-3">
-    <label class="form-label">Rank</label>
-    <input type="text" name="rank" class="form-control bg-dark text-white" placeholder="Rank (e.g., SGT)">
+    <label class="form-label">Name</label>
+    <input name="last_name" class="form-control" placeholder="e.g., aguirre" required>
   </div>
   <div class="mb-3">
     <label class="form-label">PIN</label>
-    <input type="password" name="pin" class="form-control bg-dark text-white" placeholder="PIN">
+    <input name="pin" type="password" class="form-control" required>
   </div>
-  <button class="btn btn-primary">Login</button>
+  <button class="btn btn-primary w-100">Log In</button>
 </form>
-<p class="mt-3"><a href="/register" class="text-info">Don't have an account? Register</a></p>
-{% endblock %}
+

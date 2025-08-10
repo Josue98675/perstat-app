@@ -122,25 +122,31 @@ def register():
 def login():
     if request.method == 'POST':
         last_name = request.form['last_name'].strip().lower()
-        rank = request.form['rank'].strip().upper()
         entered_pin = request.form['pin'].strip()
 
         try:
             conn = get_db()
             cur = conn.cursor()
-            cur.execute('SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s AND UPPER(rank) = %s',
-                        (last_name, rank))
+            # Name-only lookup (case-insensitive)
+            cur.execute(
+                'SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s LIMIT 1',
+                (last_name,)
+            )
             user = cur.fetchone()
             cur.close()
+
             if user and check_password_hash(user['pin'], entered_pin):
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 return redirect(url_for('roster'))
-            flash('Login failed.')
+
+            flash('Login failed. Check name & PIN.')
         except Exception as e:
             print("❌ Login Error:", e)
             flash('Login failed due to internal error.')
+
     return render_template('login.html')
+
 
 @app.route('/logout')
 def logout():
