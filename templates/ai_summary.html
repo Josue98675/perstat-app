@@ -2,25 +2,35 @@
 {% block content %}
 <h2 class="mb-3">AI Summaries</h2>
 
+{% if session.get('is_admin') %}
+<form method="post" action="{{ url_for('manual_generate_summary') }}" class="mb-3">
+  <button class="btn btn-primary">Generate Now</button>
+</form>
+{% endif %}
+
 {% if summaries and summaries|length > 0 %}
 <div class="accordion" id="summaryAccordion">
   {% for s in summaries %}
     {% set item_id = "s" ~ loop.index %}
     <div class="accordion-item bg-dark text-white">
       <h2 class="accordion-header" id="heading-{{ item_id }}">
-        <button class="accordion-button {% if not loop.first %}collapsed{% endif %} bg-secondary text-white"
-                type="button"
-                data-bs-toggle="collapse"
-                data-bs-target="#collapse-{{ item_id }}"
-                aria-expanded="{{ 'true' if loop.first else 'false' }}"
-                aria-controls="collapse-{{ item_id }}">
+        <button
+          class="accordion-button {% if not loop.first %}collapsed{% endif %} bg-secondary text-white"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#collapse-{{ item_id }}"
+          aria-expanded="{{ 'true' if loop.first else 'false' }}"
+          aria-controls="collapse-{{ item_id }}"
+        >
           {{ s.date }} — Summary
         </button>
       </h2>
-      <div id="collapse-{{ item_id }}"
-           class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
-           aria-labelledby="heading-{{ item_id }}"
-           data-bs-parent="#summaryAccordion">
+      <div
+        id="collapse-{{ item_id }}"
+        class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+        aria-labelledby="heading-{{ item_id }}"
+        data-bs-parent="#summaryAccordion"
+      >
         <div class="accordion-body">
           <pre class="mb-0 text-white" style="white-space: pre-wrap;">{{ s.summary }}</pre>
           <small class="text-muted">Created at: {{ s.created_at }}</small>
@@ -31,9 +41,12 @@
 </div>
 {% else %}
   <div class="alert alert-warning">
-    No summaries yet. As an admin, visit
-    <a href="{{ url_for('manual_generate_summary') }}">Generate Summary</a> to create one now.
+    No summaries yet.
+    {% if session.get('is_admin') %}
+      Click <strong>Generate Now</strong> above to create one.
+    {% else %}
+      Check back later.
+    {% endif %}
   </div>
 {% endif %}
 {% endblock %}
-
