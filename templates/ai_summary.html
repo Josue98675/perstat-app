@@ -9,68 +9,53 @@
 {% endif %}
 
 {% if summaries and summaries|length > 0 %}
-<div class="accordion" id="summaryAccordion">
-  {% for s in summaries %}
-    {% set item_id = "s" ~ loop.index %}
-    <div class="accordion-item bg-dark text-white border-secondary">
-      <h2 class="accordion-header" id="heading-{{ item_id }}">
-        <button
-          class="accordion-button {% if not loop.first %}collapsed{% endif %} bg-secondary text-white"
-          type="button"
-          data-bs-toggle="collapse"
-          data-bs-target="#collapse-{{ item_id }}"
-          aria-expanded="{{ 'true' if loop.first else 'false' }}"
-          aria-controls="collapse-{{ item_id }}"
-        >
-          {{ s.date }} — Summary
-        </button>
-      </h2>
+  <!-- Share the newest (top) summary to WhatsApp -->
+  <div class="mb-3">
+    <a class="btn btn-success"
+       href="https://wa.me/?text={{ summaries[0].summary|urlencode }}"
+       target="_blank" rel="noopener">
+      Share latest to WhatsApp
+    </a>
+  </div>
 
-      <div
-        id="collapse-{{ item_id }}"
-        class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
-        aria-labelledby="heading-{{ item_id }}"
-        data-bs-parent="#summaryAccordion"
-      >
-        <div class="accordion-body">
-          <div class="d-flex justify-content-end">
-            <button
-              class="btn btn-sm btn-outline-light mb-3"
-              type="button"
-              onclick="copySummary('summary-text-{{ item_id }}')"
-              title="Copy to clipboard"
-            >
-              Copy
-            </button>
+  <div class="accordion" id="summaryAccordion">
+    {% for s in summaries %}
+      {% set item_id = "s" ~ loop.index %}
+      <div class="accordion-item bg-dark text-white">
+        <h2 class="accordion-header" id="heading-{{ item_id }}">
+          <button class="accordion-button {% if not loop.first %}collapsed{% endif %} bg-secondary text-white"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapse-{{ item_id }}"
+                  aria-expanded="{{ 'true' if loop.first else 'false' }}"
+                  aria-controls="collapse-{{ item_id }}">
+            {{ s.date }} — Summary
+          </button>
+        </h2>
+        <div id="collapse-{{ item_id }}"
+             class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+             aria-labelledby="heading-{{ item_id }}"
+             data-bs-parent="#summaryAccordion">
+          <div class="accordion-body">
+            <pre class="mb-3 text-white" style="white-space: pre-wrap;">{{ s.summary }}</pre>
+            <div class="d-flex gap-2 align-items-center">
+              <small class="text-muted me-auto">Created at: {{ s.created_at }}</small>
+              <!-- Share THIS specific summary -->
+              <a class="btn btn-sm btn-success"
+                 href="https://wa.me/?text={{ s.summary|urlencode }}"
+                 target="_blank" rel="noopener">
+                Share this to WhatsApp
+              </a>
+            </div>
           </div>
-
-          <pre id="summary-text-{{ item_id }}" class="mb-2 text-white" style="white-space: pre-wrap;">{{ s.summary }}</pre>
-          <small class="text-muted">Created at: {{ s.created_at }}</small>
         </div>
       </div>
-    </div>
-  {% endfor %}
-</div>
+    {% endfor %}
+  </div>
 {% else %}
   <div class="alert alert-warning">
-    No summaries yet. {% if session.get('is_admin') %}Click <strong>Generate Now</strong> above to create one.{% else %}Please check back later.{% endif %}
+    No summaries yet. As an admin, click <strong>Generate Now</strong> above to create one.
   </div>
 {% endif %}
-
-<script>
-  async function copySummary(elementId) {
-    try {
-      const text = document.getElementById(elementId).innerText;
-      await navigator.clipboard.writeText(text);
-      // Quick visual feedback
-      const btn = event.currentTarget;
-      const old = btn.innerText;
-      btn.innerText = "Copied!";
-      setTimeout(() => (btn.innerText = old), 1000);
-    } catch (err) {
-      console.error("Copy failed", err);
-      alert("Could not copy. Try selecting the text and copying manually.");
-    }
-  }
-</script>
 {% endblock %}
+

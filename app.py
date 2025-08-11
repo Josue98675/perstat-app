@@ -243,28 +243,28 @@ def roster():
     conn = get_db()
     cur = conn.cursor()
 
+    # Target = tomorrow
     target = (datetime.now() + timedelta(days=1))
     target_date = target.strftime('%Y-%m-%d')
     date_compact = target.strftime('%Y%m%d')
     weekday = target.strftime('%A')
 
-    # All users
+    # Users
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
-    # Tomorrow's perstat rows
+    # Perstat for tomorrow
     cur.execute('SELECT * FROM perstat WHERE date = %s', (target_date,))
-    statuses = cur.fetchall()
+    rows = cur.fetchall()
 
     # Recent messages (unchanged)
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 3')
     messages = cur.fetchall()
     cur.close()
 
-    # Map user_id -> status
-    status_by_user = {s['user_id']: (s['status'] or 'Not Submitted') for s in statuses}
+    # Map user -> status
+    status_by_user = {r['user_id']: (r['status'] or 'Not Submitted') for r in rows}
 
-    # Normalize status labels to your desired headings
     def norm_status(raw):
         if not raw:
             return 'Not Submitted'
@@ -275,43 +275,82 @@ def roster():
             return 'Leave'
         if r in ('gym detail', 'gym', 'bmm', 'detail'):
             return 'GYM Detail'
-        return raw.title()  # fallback
+        return raw.title()
 
-    # Build per-squad blocks
-    squads = ['1st Squad', '2nd Squad']
+    # Build blocks for 1st/2nd Squad
     squad_blocks = {
         '1st Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
         '2nd Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
     }
 
     for u in users:
-        squad_name = u.get('squad', '').strip()
-        # Accept common inputs like '1st', '1st squad', '2nd', '2nd squad'
-        if squad_name.lower().startswith('1st'):
-            bucket = squad_blocks['1st Squad']
-        elif squad_name.lower().startswith('2nd'):
-            bucket = squad_blocks['2nd Squad']
+        squad_name = (u.get('squad') or '').strip().lower()
+        if squad_name.startswith('1st'):
+            block = squad_blocks['1st Squad']
+        elif squad_name.startswith('2nd'):
+            block = squad_blocks['2nd Squad']
         else:
-            # If user has no/other squad, skip showing in these two panels
+            # Skip users not in 1st/2nd Squad
             continue
 
-        bucket['Assigned'] += 1
-
+        block['Assigned'] += 1
         st = norm_status(status_by_user.get(u['id']))
         fullname = f"{u['rank']} {u['last_name']}".strip()
-        # Only collect the sections we care about; others go under their own title
         if st in ('Present', 'Leave', 'GYM Detail'):
-            bucket[st].append(fullname)
+            block[st].append(fullname)
         else:
-            bucket['Not Submitted'].append(fullname)
+            block['Not Submitted'].append(fullname)
 
-    # Pass everything to the template
+    # Build WhatsApp share text (only include non-empty sections)
+    def build_block_text(title, block):
+        lines = []
+        lines.append(f"{title} PerStats")
+        lines.append(f"{date_compact}/ {weekday}")
+        lines.append("")
+        lines.append(f"Assigned: {block['Assigned']}")
+        if block['Present']:
+            lines.append(f"Present: {len(block['Present'])}")
+        if block['Leave']:
+            lines.append(f"Leave: {len(block['Leave'])}")
+        if block['GYM Detail']:
+            lines.append(f"GYM Detail: {len(block['GYM Detail'])}")
+        if block['Not Submitted']:
+            lines.append(f"Not Submitted: {len(block['Not Submitted'])}")
+        lines.append("")
+        lines.append("____________________")
+        lines.append("")
+
+        if block['Present']:
+            lines.append("Present")
+            lines.extend(block['Present'])
+            lines.append("")
+        if block['Leave']:
+            lines.append("Leave")
+            lines.extend(block['Leave'])
+            lines.append("")
+        if block['GYM Detail']:
+            lines.append("Gym Detail")
+            lines.extend(block['GYM Detail'])
+            lines.append("")
+        if block['Not Submitted']:
+            lines.append("Not Submitted")
+            lines.extend(block['Not Submitted'])
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
+    roster_text_parts = []
+    for name in ['1st Squad', '2nd Squad']:
+        roster_text_parts.append(build_block_text(name, squad_blocks[name]))
+    roster_text = "\n\n\n".join(roster_text_parts)
+
     return render_template(
         'roster.html',
-        date_compact=date_compact,
         weekday=weekday,
+        date_compact=date_compact,
         squad_blocks=squad_blocks,
         messages=messages,
+        roster_text=roster_text,   # 👈 makes your WhatsApp button work
         is_admin=session.get('is_admin')
     )
 

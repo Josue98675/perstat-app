@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="mb-3">Roster</h2>
+<h2 class="mb-3">Roster for {{ weekday }} ({{ date_compact }})</h2>
+
+<!-- WhatsApp Share Button -->
+<div class="mb-3">
+  <a class="btn btn-success"
+     href="https://wa.me/?text={{ roster_text|urlencode }}"
+     target="_blank" rel="noopener">
+    Share Roster to WhatsApp
+  </a>
+</div>
 
 <div class="row g-3">
   {% for squad_name, block in squad_blocks.items() %}
