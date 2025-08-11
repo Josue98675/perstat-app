@@ -20,6 +20,47 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # Keep login acti
 app.config['SESSION_COOKIE_SECURE'] = True  # ✅ Ensures cookies only sent over HTTPS
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # ✅ Allows cross-site cookies (needed for some PWAs)
 
+# ---- Roster helpers ----
+SECTIONS_ORDER = [
+    "Present", "Leave", "Gym detail", "Hospital", "School",
+    "LWC", "Comp", "BMM", "Appointment", "Not Submitted"
+]
+
+def norm_status(raw):
+    """Normalize any status text to one of our canonical labels."""
+    if not raw:
+        return "Not Submitted"
+    t = str(raw).strip().lower()
+    aliases = {
+        "present": "Present",
+        "leave": "Leave",
+        "gym": "Gym detail",
+        "gym detail": "Gym detail",
+        "gymdetail": "Gym detail",
+        "hospital": "Hospital",
+        "school": "School",
+        "lwc": "LWC",
+        "comp": "Comp",
+        "bmm": "BMM",
+        "appointment": "Appointment",
+        "appt": "Appointment",
+        "not submitted": "Not Submitted",
+        "notsubmitted": "Not Submitted",
+        "": "Not Submitted",
+        None: "Not Submitted",
+    }
+    return aliases.get(t, raw.strip().title())
+
+def normalize_squad(val):
+    """Force squad labels to '1st Squad' / '2nd Squad' / 'Unassigned'."""
+    v = (val or "").strip().lower()
+    if v in {"1st squad", "1st", "first", "1"}:
+        return "1st Squad"
+    if v in {"2nd squad", "2nd", "second", "2"}:
+        return "2nd Squad"
+    return "Unassigned"
+
+
 @app.context_processor
 def inject_vapid():
     return {"VAPID_PUBLIC_KEY": os.environ.get("VAPID_PUBLIC_KEY", "")}
@@ -157,13 +198,26 @@ def login():
 
     return render_template('login.html')
 
-@app.route('/admin/generate_summary')
+# --- REPLACE any existing /admin/generate_summary routes with this one ---
+@app.route('/admin/generate_summary', methods=['GET', 'POST'])
 @login_required
 def manual_generate_summary():
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
+    # Generate on GET or POST – nice and simple
     generate_ai_summary()
-    flash("✅ AI Summary generated.")
+    flash('AI summary generated.')
+    return redirect(url_for('ai_summary'))
+
+# --- REPLACE any existing /admin/generate_summary routes with this one ---
+@app.route('/admin/generate_summary', methods=['GET', 'POST'])
+@login_required
+def manual_generate_summary():
+    if not session.get('is_admin'):
+        return redirect(url_for('roster'))
+    # Generate on GET or POST – nice and simple
+    generate_ai_summary()
+    flash('AI summary generated.')
     return redirect(url_for('ai_summary'))
 
 
@@ -199,44 +253,78 @@ def submit():
 def roster():
     conn = get_db()
     cur = conn.cursor()
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
 
+    target = (datetime.now() + timedelta(days=1))
+    target_date = target.strftime('%Y-%m-%d')
+    date_compact = target.strftime('%Y%m%d')
+    weekday = target.strftime('%A')
+
+    # All users
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
-    cur.execute('SELECT * FROM perstat WHERE date = %s', (tomorrow,))
+    # Tomorrow's perstat rows
+    cur.execute('SELECT * FROM perstat WHERE date = %s', (target_date,))
     statuses = cur.fetchall()
 
+    # Recent messages (unchanged)
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 3')
     messages = cur.fetchall()
     cur.close()
 
-    status_by_user = {s['user_id']: s for s in statuses}
-    squads = {'1st': [], '2nd': []}
-    summaries = {'1st': {}, '2nd': {}}
+    # Map user_id -> status
+    status_by_user = {s['user_id']: (s['status'] or 'Not Submitted') for s in statuses}
 
-    for user in users:
-        uid = user['id']
-        squad_raw = user['squad'].strip().lower()
-        user_data = dict(user)
-        row = status_by_user.get(uid)
-        user_data['status'] = row['status'] if row else 'Not Submitted'
+    # Normalize status labels to your desired headings
+    def norm_status(raw):
+        if not raw:
+            return 'Not Submitted'
+        r = raw.strip().lower()
+        if r in ('present', 'p'):
+            return 'Present'
+        if r in ('leave', 'lv', 'on leave'):
+            return 'Leave'
+        if r in ('gym detail', 'gym', 'bmm', 'detail'):
+            return 'GYM Detail'
+        return raw.title()  # fallback
 
-        if "1st" in squad_raw:
-            squads['1st'].append(user_data)
-            summaries['1st'][user_data['status']] = summaries['1st'].get(user_data['status'], 0) + 1
-        elif "2nd" in squad_raw:
-            squads['2nd'].append(user_data)
-            summaries['2nd'][user_data['status']] = summaries['2nd'].get(user_data['status'], 0) + 1
+    # Build per-squad blocks
+    squads = ['1st Squad', '2nd Squad']
+    squad_blocks = {
+        '1st Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
+        '2nd Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
+    }
 
-    return render_template('roster.html',
-                           squads=squads,
-                           summaries=summaries,
-                           messages=messages,
-                           is_admin=session.get('is_admin'))
+    for u in users:
+        squad_name = u.get('squad', '').strip()
+        # Accept common inputs like '1st', '1st squad', '2nd', '2nd squad'
+        if squad_name.lower().startswith('1st'):
+            bucket = squad_blocks['1st Squad']
+        elif squad_name.lower().startswith('2nd'):
+            bucket = squad_blocks['2nd Squad']
+        else:
+            # If user has no/other squad, skip showing in these two panels
+            continue
 
+        bucket['Assigned'] += 1
 
+        st = norm_status(status_by_user.get(u['id']))
+        fullname = f"{u['rank']} {u['last_name']}".strip()
+        # Only collect the sections we care about; others go under their own title
+        if st in ('Present', 'Leave', 'GYM Detail'):
+            bucket[st].append(fullname)
+        else:
+            bucket['Not Submitted'].append(fullname)
 
+    # Pass everything to the template
+    return render_template(
+        'roster.html',
+        date_compact=date_compact,
+        weekday=weekday,
+        squad_blocks=squad_blocks,
+        messages=messages,
+        is_admin=session.get('is_admin')
+    )
 
 
 
@@ -396,57 +484,129 @@ def ai_summary():
 def generate_ai_summary():
     conn = get_db()
     cur = conn.cursor()
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-    # Get all squads
-    cur.execute("SELECT DISTINCT squad FROM users")
-    squads = [row['squad'] for row in cur.fetchall()]
 
-    summary_lines = []
-    for squad in squads:
-        cur.execute('''
-            SELECT u.rank, u.last_name, p.status
-            FROM users u
-            LEFT JOIN perstat p ON u.id = p.user_id AND p.date = %s
-            WHERE u.squad = %s
-        ''', (tomorrow, squad))
-        data = cur.fetchall()
-        total = len(data)
-        status_count = {}
-        for row in data:
-            status = row['status'] if row['status'] else 'Not Submitted'
-            status_count[status] = status_count.get(status, 0) + 1
-        status_summary = ', '.join([f"{k.capitalize()}-{v}" for k, v in status_count.items()])
-        summary_lines.append(f"{squad} Squad ({total}): {status_summary}")
+    target = (datetime.now() + timedelta(days=1))
+    date_db = target.strftime('%Y-%m-%d')
+    date_compact = target.strftime('%Y%m%d')
+    weekday = target.strftime('%A')
 
-    overall = '\n'.join(summary_lines)
+    # Build per-squad lists like in roster
+    cur.execute('SELECT * FROM users')
+    users = cur.fetchall()
 
-    # ✅ Save new AI summary
+    cur.execute('SELECT * FROM perstat WHERE date = %s', (date_db,))
+    rows = cur.fetchall()
+    cur.close()
+
+    status_by_user = {r['user_id']: (r['status'] or 'Not Submitted') for r in rows}
+
+    def norm_status(raw):
+        if not raw:
+            return 'Not Submitted'
+        r = raw.strip().lower()
+        if r in ('present', 'p'):
+            return 'Present'
+        if r in ('leave', 'lv', 'on leave'):
+            return 'Leave'
+        if r in ('gym detail', 'gym', 'bmm', 'detail'):
+            return 'GYM Detail'
+        return raw.title()
+
+    squads = ['1st Squad', '2nd Squad']
+    squad_blocks = {
+        '1st Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
+        '2nd Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
+    }
+
+    for u in users:
+        sname = u.get('squad', '').strip()
+        if sname.lower().startswith('1st'):
+            block = squad_blocks['1st Squad']
+        elif sname.lower().startswith('2nd'):
+            block = squad_blocks['2nd Squad']
+        else:
+            continue
+
+        block['Assigned'] += 1
+        st = norm_status(status_by_user.get(u['id']))
+        fullname = f"{u['rank']} {u['last_name']}".strip()
+        if st in ('Present', 'Leave', 'GYM Detail'):
+            block[st].append(fullname)
+        else:
+            block['Not Submitted'].append(fullname)
+
+    # Format like your example, hiding empty sections
+    def fmt_block(title, block):
+        lines = []
+        lines.append(f"{title} PerStats")
+        lines.append(f"{date_compact}/ {weekday}")
+        lines.append("")
+        lines.append(f"Assigned: {block['Assigned']}")
+        if block['Present']:
+            lines.append(f"Present: {len(block['Present'])}")
+        if block['Leave']:
+            lines.append(f"Leave: {len(block['Leave'])}")
+        if block['GYM Detail']:
+            lines.append(f"GYM Detail: {len(block['GYM Detail'])}")
+        if block['Not Submitted']:
+            lines.append(f"Not Submitted: {len(block['Not Submitted'])}")
+        lines.append("")
+        lines.append("____________________")
+        lines.append("")
+
+        if block['Present']:
+            lines.append("Present")
+            for n in block['Present']:
+                lines.append(n)
+            lines.append("")
+
+        if block['Leave']:
+            lines.append("Leave")
+            for n in block['Leave']:
+                lines.append(n)
+            lines.append("")
+
+        if block['GYM Detail']:
+            lines.append("Gym Detail")
+            for n in block['GYM Detail']:
+                lines.append(n)
+            lines.append("")
+
+        if block['Not Submitted']:
+            lines.append("Not Submitted")
+            for n in block['Not Submitted']:
+                lines.append(n)
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
+    block_texts = []
+    for sname in ['1st Squad', '2nd Squad']:
+        block_texts.append(fmt_block(sname, squad_blocks[sname]))
+
+    final_summary = "\n\n\n".join(block_texts)
+
+    # Save (upsert) to ai_summaries and clean old ones
+    cur = conn.cursor()
     cur.execute('''
         INSERT INTO ai_summaries (date, summary, created_at)
         VALUES (%s, %s, %s)
         ON CONFLICT (date) DO UPDATE SET summary = EXCLUDED.summary
-    ''', (tomorrow, overall, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    ''', (date_db, final_summary, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
-    # 🔁 Clear statuses for tomorrow (reset roster)
-    cur.execute('DELETE FROM perstat WHERE date = %s', (tomorrow,))
+    # (Keep or remove the perstat clear if you still want a reset)
+    # cur.execute('DELETE FROM perstat WHERE date = %s', (date_db,))
 
-    # 🧹 Delete AI summaries older than 2 days
+    # Delete summaries older than 2 days
     two_days_ago = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
     cur.execute('DELETE FROM ai_summaries WHERE date < %s', (two_days_ago,))
 
-    conn.commit()    # ✅ Send push notification to NCOs if everyone has submitted
-    if all_users_submitted(conn, tomorrow):
-        push_body = f"PERSTAT Summary for {tomorrow}:\n\n{overall}"
-        for sub in subscriptions:
-            try:
-                webpush(subscription_info=sub,
-                        data=json.dumps({"title": "PERSTAT Summary", "body": push_body}),
-                        vapid_private_key=VAPID_PRIVATE_KEY,
-                        vapid_claims=VAPID_CLAIMS)
-            except WebPushException as ex:
-                print("Push failed:", repr(ex))
-
+    conn.commit()
     cur.close()
+
+    # Optional: send via push or WhatsApp here if you want
+    # broadcast_whatsapp(final_summary)
+
 
 @app.route('/manifest.json')
 def manifest():
