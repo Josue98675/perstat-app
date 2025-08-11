@@ -198,18 +198,7 @@ def login():
 
     return render_template('login.html')
 
-# --- REPLACE any existing /admin/generate_summary routes with this one ---
-@app.route('/admin/generate_summary', methods=['GET', 'POST'])
-@login_required
-def manual_generate_summary():
-    if not session.get('is_admin'):
-        return redirect(url_for('roster'))
-    # Generate on GET or POST – nice and simple
-    generate_ai_summary()
-    flash('AI summary generated.')
-    return redirect(url_for('ai_summary'))
-
-# --- REPLACE any existing /admin/generate_summary routes with this one ---
+# --- keep ONLY this one block ---
 @app.route('/admin/generate_summary', methods=['GET', 'POST'])
 @login_required
 def manual_generate_summary():
