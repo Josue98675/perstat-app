@@ -412,13 +412,20 @@ def view_users():
 def delete_user(user_id):
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
+
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
-    conn.commit()
-    cur.close()
-    flash("User deleted.")
+    try:
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        flash("User deleted.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error deleting user: {e}", "danger")
+    finally:
+        cur.close()
     return redirect(url_for('view_users'))
+
 
 @app.route('/admin/edit/<int:user_id>', methods=['GET'])
 @login_required
