@@ -2,13 +2,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, render_template, request, redirect, session, url_for, g, flash, Response
-import psycopg2, os, csv
+import psycopg2, os, csv, json
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, date
 from functools import wraps
 from email_utils import send_reminder_email
 from werkzeug.security import generate_password_hash, check_password_hash
-import json
 from pywebpush import webpush, WebPushException
 from zoneinfo import ZoneInfo
 
@@ -17,26 +16,27 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-# Keep login active for 30 days
+# Long-lived login
 from datetime import timedelta as _td
-
 app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=3650)  # ~10 years
-app.config['SESSION_REFRESH_EACH_REQUEST'] = True          # refresh expiry on every request
+app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-
 
 # New York timezone
 APP_TZ = ZoneInfo("America/New_York")
 
-# ---- Roster helpers / labels ----
+# Cutoffs (NY time)
+ROSTER_ROLLOVER_HOUR = 17  # 5pm -> roster shows tomorrow
+SUBMIT_NEXTDAY_HOUR = 18    # 6pm -> submissions go to tomorrow
+
+# ---- Labels / helpers ----
 SECTIONS_ORDER = [
     "Present", "Leave", "Gym detail", "Hospital", "School",
     "LWC", "Comp", "BMM", "Appointment", "Not Submitted"
 ]
 
 def norm_status(raw):
-    """Normalize any status text to one of our canonical labels."""
     if not raw:
         return "Not Submitted"
     t = str(raw).strip().lower()
@@ -74,11 +74,22 @@ def now_ny():
 def today_ny():
     return now_ny().date()
 
-def today_str():
-    return today_ny().strftime('%Y-%m-%d')
-
 def fmt_day_header(d: date):
-    return d.strftime('%Y%m%d'), d.strftime('%A')  # ("20250810", "Monday")
+    return d.strftime('%Y%m%d'), d.strftime('%A')
+
+def roster_target_date(ny_now: datetime) -> date:
+    """Show today's PERSTAT before 5pm, tomorrow at/after 5pm."""
+    base = ny_now.date()
+    if ny_now.hour >= ROSTER_ROLLOVER_HOUR:
+        return base + timedelta(days=1)
+    return base
+
+def submit_target_date(ny_now: datetime) -> date:
+    """Write to today's PERSTAT before 6pm, tomorrow at/after 6pm."""
+    base = ny_now.date()
+    if ny_now.hour >= SUBMIT_NEXTDAY_HOUR:
+        return base + timedelta(days=1)
+    return base
 
 @app.context_processor
 def inject_vapid():
@@ -91,7 +102,6 @@ def get_db():
     return g.db
 
 def ensure_leaves_table():
-    """Create leaves table if not exists."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -106,7 +116,6 @@ def ensure_leaves_table():
     conn.commit()
     cur.close()
 
-# Count-submit helper (kept)
 def all_users_submitted(conn, target_date_str):
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM users")
@@ -139,8 +148,7 @@ def enforce_https_in_production():
 @app.before_request
 def keep_session_fresh():
     if 'user_id' in session:
-        session.permanent = True  # ensures the cookie uses the long lifetime
-
+        session.permanent = True
 
 # ---------------------- Push ----------------------
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
@@ -188,7 +196,6 @@ def register():
         squad = request.form['squad']
         email = request.form.get('email')
         is_admin = rank in ["SGT", "SSG", "SFC", "MSG", "1SG", "SGM", "CSM", "SMA", "2LT", "1LT", "LT", "CPT"]
-
         try:
             conn = get_db()
             cur = conn.cursor()
@@ -208,31 +215,24 @@ def login():
     if request.method == 'POST':
         last_name = request.form['last_name'].strip().lower()
         entered_pin = request.form['pin'].strip()
-
         try:
             conn = get_db()
             cur = conn.cursor()
-            cur.execute(
-                'SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s LIMIT 1',
-                (last_name,)
-            )
+            cur.execute('SELECT id, pin, is_admin FROM users WHERE LOWER(last_name) = %s LIMIT 1', (last_name,))
             user = cur.fetchone()
             cur.close()
-
             if user and check_password_hash(user['pin'], entered_pin):
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 session.permanent = True
                 return redirect(url_for('roster'))
-
             flash('Login failed. Check name & PIN.')
         except Exception as e:
             print("❌ Login Error:", e)
             flash('Login failed due to internal error.')
-
     return render_template('login.html')
 
-# Manual AI summary trigger (single definition)
+# Manual AI summary trigger
 @app.route('/admin/generate_summary', methods=['GET', 'POST'])
 @login_required
 def manual_generate_summary():
@@ -246,27 +246,18 @@ def manual_generate_summary():
 @app.route('/leave/new', methods=['POST'])
 @login_required
 def create_leave():
-    """
-    Expect form fields:
-      start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
-    Makes user 'Leave' for each day inclusive in that range.
-    """
     try:
         start_date = request.form['start_date']
         end_date = request.form['end_date']
-        # Basic sanity
         sd = datetime.strptime(start_date, '%Y-%m-%d').date()
         ed = datetime.strptime(end_date, '%Y-%m-%d').date()
         if ed < sd:
             flash("End date must be after start date.", "warning")
             return redirect(url_for('roster'))
-
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO leaves (user_id, start_date, end_date)
-            VALUES (%s, %s, %s)
-        """, (session['user_id'], sd, ed))
+        cur.execute("INSERT INTO leaves (user_id, start_date, end_date) VALUES (%s, %s, %s)",
+                    (session['user_id'], sd, ed))
         conn.commit()
         cur.close()
         flash("Leave period saved.", "success")
@@ -276,7 +267,6 @@ def create_leave():
     return redirect(url_for('roster'))
 
 def users_on_leave_for_date(conn, target_date_str):
-    """Return a set of user_ids who are on leave on target_date (YYYY-MM-DD)."""
     cur = conn.cursor()
     cur.execute("""
         SELECT user_id
@@ -294,31 +284,33 @@ def submit():
     if request.method == 'POST':
         status = request.form['status']
         comment = request.form['comment']
-        date_str = today_str()  # ✅ today in New York
+        ny_now = now_ny()
+        # Write to today's PERSTAT before 6pm; to tomorrow at/after 6pm
+        target_date = submit_target_date(ny_now).strftime('%Y-%m-%d')
         user_id = session['user_id']
         conn = get_db()
         cur = conn.cursor()
 
-        # cleanup old perstat (still OK)
-        cutoff = (today_ny() - timedelta(days=10)).strftime('%Y-%m-%d')
+        # keep cleanup of very old rows
+        cutoff = (ny_now.date() - timedelta(days=10)).strftime('%Y-%m-%d')
         cur.execute('DELETE FROM perstat WHERE date < %s', (cutoff,))
 
-        cur.execute('SELECT * FROM perstat WHERE user_id = %s AND date = %s', (user_id, date_str))
+        cur.execute('SELECT * FROM perstat WHERE user_id = %s AND date = %s', (user_id, target_date))
         existing = cur.fetchone()
 
         if existing:
             cur.execute('UPDATE perstat SET status = %s, comment = %s WHERE user_id = %s AND date = %s',
-                        (status, comment, user_id, date_str))
+                        (status, comment, user_id, target_date))
         else:
             cur.execute('INSERT INTO perstat (user_id, date, status, comment) VALUES (%s, %s, %s, %s)',
-                        (user_id, date_str, status, comment))
+                        (user_id, target_date, status, comment))
         conn.commit()
         cur.close()
         flash('Submitted successfully!')
         return redirect(url_for('roster'))
     return render_template('submit.html')
 
-# ---------------------- Roster (today, NY) ----------------------
+# ---------------------- Roster (NY cycle) ----------------------
 @app.route('/roster')
 @login_required
 def roster():
@@ -327,24 +319,22 @@ def roster():
     conn = get_db()
     cur = conn.cursor()
 
-    d_today = today_ny()
-    target_date_str = d_today.strftime('%Y-%m-%d')
-    date_compact, weekday = fmt_day_header(d_today)
+    ny_now = now_ny()
+    # Show today's roster before 5pm; show tomorrow at/after 5pm
+    target_date_obj = roster_target_date(ny_now)
+    target_date_str = target_date_obj.strftime('%Y-%m-%d')
+    date_compact, weekday = fmt_day_header(target_date_obj)
 
-    # Users
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
-    # Today perstat
     cur.execute('SELECT * FROM perstat WHERE date = %s', (target_date_str,))
     rows = cur.fetchall()
 
-    # Recent messages (unchanged)
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 3')
     messages = cur.fetchall()
     cur.close()
 
-    # Map user -> status (raw), then overlay leave
     perstat_status = {r['user_id']: (r['status'] or 'Not Submitted') for r in rows}
     leave_set = users_on_leave_for_date(conn, target_date_str)
 
@@ -353,7 +343,6 @@ def roster():
             return 'Leave'
         return norm_status(perstat_status.get(u_id))
 
-    # Build blocks for 1st/2nd Squad
     squad_blocks = {
         '1st Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
         '2nd Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
@@ -374,7 +363,6 @@ def roster():
         else:
             block['Not Submitted'].append(fullname)
 
-    # Build WhatsApp text (only non-empty sections)
     def build_block_text(title, block):
         lines = []
         lines.append(f"{title} PerStats")
@@ -431,7 +419,6 @@ def roster():
 def view_messages():
     conn = get_db()
     cur = conn.cursor()
-    # cleanup older than 1 day
     cutoff_ts = (now_ny() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
     cur.execute('DELETE FROM messages WHERE created_at < %s', (cutoff_ts,))
     cur.execute('SELECT * FROM messages ORDER BY created_at DESC')
@@ -524,7 +511,6 @@ def view_users():
 def delete_user(user_id):
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
-
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -558,13 +544,11 @@ def edit_user(user_id):
 def update_user(user_id):
     if not session.get('is_admin'):
         return redirect(url_for('roster'))
-
     last_name = request.form['last_name'].strip().lower()
     rank = request.form['rank'].strip().upper()
     squad = request.form['squad']
     email = request.form['email']
     is_admin = rank in ["SGT", "SSG", "SFC", "MSG", "1SG", "SGM", "CSM", "SMA", "2LT", "1LT", "LT", "CPT"]
-
     conn = get_db()
     cur = conn.cursor()
     cur.execute('''
@@ -577,7 +561,7 @@ def update_user(user_id):
     flash("User updated.")
     return redirect(url_for('view_users'))
 
-# ---------------------- AI Summary (today, NY) ----------------------
+# ---------------------- AI Summary (NY cycle) ----------------------
 @app.route('/ai_summary')
 @login_required
 def ai_summary():
@@ -594,15 +578,15 @@ def generate_ai_summary():
     conn = get_db()
     cur = conn.cursor()
 
-    d_today = today_ny()
-    date_db = d_today.strftime('%Y-%m-%d')
-    date_compact, weekday = fmt_day_header(d_today)
+    ny_now = now_ny()
+    # Generate for the same target date the roster shows (5pm rule)
+    target_date_obj = roster_target_date(ny_now)
+    date_db = target_date_obj.strftime('%Y-%m-%d')
+    date_compact, weekday = fmt_day_header(target_date_obj)
 
-    # Users
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
-    # Today perstat & leaves
     cur.execute('SELECT * FROM perstat WHERE date = %s', (date_db,))
     rows = cur.fetchall()
     cur.close()
@@ -615,7 +599,6 @@ def generate_ai_summary():
             return 'Leave'
         return norm_status(perstat_status.get(u_id))
 
-    # Build squad blocks
     squad_blocks = {
         '1st Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
         '2nd Squad': {'Assigned': 0, 'Present': [], 'Leave': [], 'GYM Detail': [], 'Not Submitted': []},
@@ -625,10 +608,8 @@ def generate_ai_summary():
         sname = normalize_squad(u.get('squad'))
         if sname not in squad_blocks:
             continue
-
         block = squad_blocks[sname]
         block['Assigned'] += 1
-
         st = friendly_status_for(u['id'])
         fullname = f"{u['rank']} {u['last_name']}".strip()
         if st in ('Present', 'Leave', 'GYM Detail'):
@@ -636,7 +617,6 @@ def generate_ai_summary():
         else:
             block['Not Submitted'].append(fullname)
 
-    # Format like your example, hiding empty sections
     def fmt_block(title, block):
         lines = []
         lines.append(f"{title} PerStats")
@@ -682,7 +662,6 @@ def generate_ai_summary():
 
     final_summary = "\n\n\n".join(block_texts)
 
-    # Save (upsert) to ai_summaries and clean old ones
     cur = conn.cursor()
     cur.execute('''
         INSERT INTO ai_summaries (date, summary, created_at)
@@ -721,16 +700,13 @@ if os.environ.get('AUTO_INIT_DB') == 'true':
             ensure_leaves_table()
     init_db()
 else:
-    # Ensure the leaves table exists even if AUTO_INIT_DB is false
     with app.app_context():
         try:
             ensure_leaves_table()
-        except Exception as _e:
-            # If DB isn't reachable here, it's fine; first request will create it.
+        except Exception:
             pass
 
 # ---------------------- Run ----------------------
 if __name__ == '__main__':
-    # Only run Flask's dev server if not running under gunicorn
     if os.environ.get("FLY_APP_NAME") is None:
         app.run(host='0.0.0.0', port=8080)
