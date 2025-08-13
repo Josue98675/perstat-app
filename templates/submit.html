@@ -1,25 +1,56 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Submit PERSTAT for Tomorrow</h2>
-<form method="post">
-  <div class="mb-3">
-    <label class="form-label">Status</label>
-    <select name="status" class="form-select bg-dark text-white">
-      <option>Present</option>
-      <option>Leave</option>
-      <option>Gym detail</option>
-      <option>Hospital</option>
-      <option>School</option>
-      <option>LWC</option>
-      <option>Comp</option>
-      <option>BMM</option>
-      <option>Appointment</option>
-    </select>
+<h2 class="mb-3">Submit PERSTAT</h2>
+
+<!-- Normal PERSTAT for today -->
+<div class="card bg-secondary text-white mb-4">
+  <div class="card-body">
+    <h4 class="mb-3">Today's PERSTAT</h4>
+    <form method="post" autocomplete="off">
+      <div class="mb-3">
+        <label class="form-label">Status</label>
+        <select name="status" class="form-select">
+          <option value="Present">Present</option>
+          <option value="Leave">Leave</option>
+          <option value="Gym detail">Gym detail</option>
+          <option value="Hospital">Hospital</option>
+          <option value="School">School</option>
+          <option value="LWC">LWC</option>
+          <option value="Comp">Comp</option>
+          <option value="BMM">BMM</option>
+          <option value="Appointment">Appointment</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Comment (optional)</label>
+        <textarea name="comment" class="form-control" rows="2" placeholder="Optional note..."></textarea>
+      </div>
+      <button class="btn btn-primary">Submit</button>
+    </form>
   </div>
-  <div class="mb-3">
-    <label class="form-label">Comment</label>
-    <input type="text" name="comment" class="form-control bg-dark text-white" placeholder="Optional comment">
+</div>
+
+<!-- Leave range (auto-marks Leave for each day in range) -->
+<div class="card bg-secondary text-white">
+  <div class="card-body">
+    <h4 class="mb-3">Set Leave Range</h4>
+    <form method="post" action="{{ url_for('create_leave') }}" autocomplete="off">
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label">Start date</label>
+          <input type="date" name="start_date" class="form-control" required>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label">End date</label>
+          <input type="date" name="end_date" class="form-control" required>
+        </div>
+      </div>
+      <p class="mt-2 mb-0 text-muted small">
+        You’ll be shown as <strong>Leave</strong> on the roster for every day in this range.
+      </p>
+      <button class="btn btn-warning mt-3">Save Leave Period</button>
+    </form>
   </div>
-  <button class="btn btn-success">Submit</button>
-</form>
+</div>
 {% endblock %}
+
