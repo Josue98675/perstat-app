@@ -16,12 +16,22 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'default_secret')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-# Long-lived login
+# ---- Long-lived login (effectively "one time") ----
 from datetime import timedelta as _td
-app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=3650)  # ~10 years
+
+# Keep sessions for ~100 years and refresh on every request
+app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=365*100)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
-app.config['SESSION_COOKIE_SECURE'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+
+# Cookie settings (required for PWAs / HTTPS)
+app.config['SESSION_COOKIE_SECURE'] = True       # only send over HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'   # allow PWA scenarios
+
+# Always mark the session as permanent once a user has logged in
+@app.before_request
+def keep_session_fresh():
+    if 'user_id' in session:
+        session.permanent = True
 
 # New York timezone
 APP_TZ = ZoneInfo("America/New_York")
@@ -144,11 +154,6 @@ def login_required(f):
 def enforce_https_in_production():
     if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
         return redirect(request.url.replace('http://', 'https://', 1))
-
-@app.before_request
-def keep_session_fresh():
-    if 'user_id' in session:
-        session.permanent = True
 
 # ---------------------- Push ----------------------
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
