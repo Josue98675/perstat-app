@@ -40,6 +40,7 @@
             <pre class="mb-3 text-white" style="white-space: pre-wrap;">{{ s.summary }}</pre>
             <div class="d-flex gap-2 align-items-center">
               <small class="text-muted me-auto">Created at: {{ s.created_at }}</small>
+              <!-- Share THIS specific summary -->
               <a class="btn btn-sm btn-success"
                  href="https://wa.me/?text={{ s.summary|urlencode }}"
                  target="_blank" rel="noopener">

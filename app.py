@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, render_template, request, redirect, session, url_for, g, flash, Response
-import psycopg2, os, csv, json, secrets
+import psycopg2, os, csv, json
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, date
 from functools import wraps
@@ -18,19 +18,17 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 
 # ---- Long-lived login (effectively "one time") ----
 from datetime import timedelta as _td
+app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=365*100)   # ~100 years
+app.config['SESSION_REFRESH_EACH_REQUEST'] = True               # refresh on every request
 
-# Keep sessions for ~100 years and refresh on every request
-app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=365*100)
-app.config['SESSION_REFRESH_EACH_REQUEST'] = True
-
-# Cookie settings (PWA + iOS Home Screen friendly)
-app.config['SESSION_COOKIE_SECURE'] = True       # only send over HTTPS
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'    # iOS standalone likes Lax more than None
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_PATH'] = '/'
-
-REMEMBER_COOKIE_NAME = "remember_token"
-REMEMBER_COOKIE_MAX_DAYS = 3650  # ~10 years
+# Cookie settings (needed for PWAs / iOS home-screen)
+app.config['SESSION_COOKIE_SECURE']   = True        # only over HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'      # allow cross-site/PWA
+app.config['SESSION_COOKIE_HTTPONLY'] = True        # JS can't read the cookie
+app.config['SESSION_COOKIE_PATH']     = '/'         # ensure path-wide
+_cookie_domain = os.environ.get('SESSION_COOKIE_DOMAIN')  # optional
+if _cookie_domain:
+    app.config['SESSION_COOKIE_DOMAIN'] = _cookie_domain  # e.g., ".yourdomain.com"
 
 # Always mark the session as permanent once a user has logged in
 @app.before_request
@@ -41,9 +39,8 @@ def keep_session_fresh():
 # New York timezone
 APP_TZ = ZoneInfo("America/New_York")
 
-# Cutoffs (NY time)
-ROSTER_ROLLOVER_HOUR = 17  # 5pm -> roster shows tomorrow
-SUBMIT_NEXTDAY_HOUR = 18   # 6pm -> submissions go to tomorrow
+# Cutoff (NY time): roster switches day at 5pm
+ROSTER_ROLLOVER_HOUR = 17  # 5pm
 
 # ---- Labels / helpers ----
 SECTIONS_ORDER = [
@@ -56,22 +53,14 @@ def norm_status(raw):
         return "Not Submitted"
     t = str(raw).strip().lower()
     aliases = {
-        "present": "Present",
-        "leave": "Leave",
-        "gym": "Gym detail",
-        "gym detail": "Gym detail",
-        "gymdetail": "Gym detail",
-        "hospital": "Hospital",
-        "school": "School",
-        "lwc": "LWC",
-        "comp": "Comp",
-        "bmm": "BMM",
-        "appointment": "Appointment",
-        "appt": "Appointment",
-        "not submitted": "Not Submitted",
-        "notsubmitted": "Not Submitted",
-        "": "Not Submitted",
-        None: "Not Submitted",
+        "present": "Present", "p": "Present",
+        "leave": "Leave", "lv": "Leave", "on leave": "Leave",
+        "gym": "Gym detail", "gym detail": "Gym detail", "gymdetail": "Gym detail",
+        "detail": "Gym detail", "bmm": "Gym detail",
+        "hospital": "Hospital", "school": "School", "lwc": "LWC", "comp": "Comp",
+        "appointment": "Appointment", "appt": "Appointment",
+        "not submitted": "Not Submitted", "notsubmitted": "Not Submitted",
+        "": "Not Submitted", None: "Not Submitted",
     }
     return aliases.get(t, raw.strip().title())
 
@@ -86,25 +75,28 @@ def normalize_squad(val):
 def now_ny():
     return datetime.now(APP_TZ)
 
-def today_ny():
-    return now_ny().date()
-
 def fmt_day_header(d: date):
     return d.strftime('%Y%m%d'), d.strftime('%A')
 
 def roster_target_date(ny_now: datetime) -> date:
-    """Show today's PERSTAT before 5pm, tomorrow at/after 5pm."""
+    """
+    Active roster date using a 5pm NY cutoff:
+      - Before 5pm: today's date
+      - 5pm or later: tomorrow's date
+    """
     base = ny_now.date()
-    if ny_now.hour >= ROSTER_ROLLOVER_HOUR:
-        return base + timedelta(days=1)
-    return base
+    return base + timedelta(days=1) if ny_now.hour >= ROSTER_ROLLOVER_HOUR else base
 
-def submit_target_date(ny_now: datetime) -> date:
-    """Write to today's PERSTAT before 6pm, tomorrow at/after 6pm."""
-    base = ny_now.date()
-    if ny_now.hour >= SUBMIT_NEXTDAY_HOUR:
-        return base + timedelta(days=1)
-    return base
+def cleanup_perstat_rollover(conn, ny_now: datetime):
+    """
+    Delete perstat rows for dates strictly before the active roster date.
+    This makes the previous day's roster disappear right when we roll over (>=5pm).
+    """
+    active_date = roster_target_date(ny_now).strftime('%Y-%m-%d')
+    cur = conn.cursor()
+    cur.execute("DELETE FROM perstat WHERE date < %s", (active_date,))
+    conn.commit()
+    cur.close()
 
 @app.context_processor
 def inject_vapid():
@@ -131,28 +123,16 @@ def ensure_leaves_table():
     conn.commit()
     cur.close()
 
-def ensure_auth_tokens_table():
-    conn = get_db()
+def users_on_leave_for_date(conn, target_date_str):
     cur = conn.cursor()
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS auth_tokens (
-            token TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            created_at TIMESTAMP NOT NULL DEFAULT now(),
-            last_seen TIMESTAMP
-        );
-    """)
-    conn.commit()
+        SELECT user_id
+        FROM leaves
+        WHERE %s::date BETWEEN start_date AND end_date
+    """, (target_date_str,))
+    rows = cur.fetchall()
     cur.close()
-
-def all_users_submitted(conn, target_date_str):
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()['count']
-    cur.execute("SELECT COUNT(DISTINCT user_id) FROM perstat WHERE date = %s", (target_date_str,))
-    submitted = cur.fetchone()['count']
-    cur.close()
-    return submitted == total_users
+    return {r['user_id'] for r in rows}
 
 @app.teardown_appcontext
 def close_db(error):
@@ -171,67 +151,9 @@ def login_required(f):
 
 @app.before_request
 def enforce_https_in_production():
+    # Make sure you actually serve via HTTPS in production, or cookies won't persist on iOS PWAs
     if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
         return redirect(request.url.replace('http://', 'https://', 1))
-
-# ---- Remember-token helpers ----
-def set_remember_token(resp, user_id):
-    """Create a long-lived token, store in DB, set cookie."""
-    token = secrets.token_urlsafe(32)
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO auth_tokens (token, user_id) VALUES (%s, %s) ON CONFLICT (token) DO NOTHING",
-        (token, user_id)
-    )
-    conn.commit()
-    cur.close()
-
-    max_age = REMEMBER_COOKIE_MAX_DAYS * 24 * 60 * 60
-    resp.set_cookie(
-        REMEMBER_COOKIE_NAME,
-        token,
-        max_age=max_age,
-        secure=True,
-        httponly=True,
-        samesite='Lax',
-        path='/'
-    )
-
-def clear_remember_token(resp, token_value):
-    """Delete token from DB and clear cookie."""
-    if token_value:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM auth_tokens WHERE token = %s", (token_value,))
-        conn.commit()
-        cur.close()
-    resp.delete_cookie(REMEMBER_COOKIE_NAME, path='/')
-
-def restore_session_from_token():
-    """If Flask session is gone, try to restore it using the remember_token cookie."""
-    if 'user_id' in session:
-        return
-    token = request.cookies.get(REMEMBER_COOKIE_NAME)
-    if not token:
-        return
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM auth_tokens WHERE token = %s", (token,))
-    row = cur.fetchone()
-    if row:
-        cur.execute("UPDATE auth_tokens SET last_seen = now() WHERE token = %s", (token,))
-        conn.commit()
-        session['user_id'] = row['user_id']
-        session.permanent = True
-        cur.execute("SELECT is_admin FROM users WHERE id = %s", (row['user_id'],))
-        u = cur.fetchone()
-        session['is_admin'] = (u['is_admin'] if u else False)
-    cur.close()
-
-@app.before_request
-def try_restore_session():
-    restore_session_from_token()
 
 # ---------------------- Push ----------------------
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
@@ -268,6 +190,9 @@ def push_notify():
 # ---------------------- Routes ----------------------
 @app.route('/')
 def index():
+    # If already logged in, go straight to roster
+    if 'user_id' in session:
+        return redirect(url_for('roster'))
     return redirect(url_for('login'))
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -308,23 +233,12 @@ def login():
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 session.permanent = True
-                # Set remember_token cookie + DB row
-                resp = redirect(url_for('roster'))
-                set_remember_token(resp, user['id'])
-                return resp
+                return redirect(url_for('roster'))
             flash('Login failed. Check name & PIN.')
         except Exception as e:
             print("❌ Login Error:", e)
             flash('Login failed due to internal error.')
     return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    token = request.cookies.get(REMEMBER_COOKIE_NAME)
-    session.clear()
-    resp = redirect(url_for('login'))
-    clear_remember_token(resp, token)
-    return resp
 
 # Manual AI summary trigger
 @app.route('/admin/generate_summary', methods=['GET', 'POST'])
@@ -360,17 +274,6 @@ def create_leave():
         flash("Could not save leave.", "danger")
     return redirect(url_for('roster'))
 
-def users_on_leave_for_date(conn, target_date_str):
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id
-        FROM leaves
-        WHERE %s::date BETWEEN start_date AND end_date
-    """, (target_date_str,))
-    rows = cur.fetchall()
-    cur.close()
-    return {r['user_id'] for r in rows}
-
 # ---------------------- Submit PERSTAT ----------------------
 @app.route('/submit', methods=['GET', 'POST'])
 @login_required
@@ -379,16 +282,16 @@ def submit():
         status = request.form['status']
         comment = request.form['comment']
         ny_now = now_ny()
-        # Write to today's PERSTAT before 6pm; to tomorrow at/after 6pm
-        target_date = submit_target_date(ny_now).strftime('%Y-%m-%d')
-        user_id = session['user_id']
+
         conn = get_db()
+        # cleanup at 5pm rollover
+        cleanup_perstat_rollover(conn, ny_now)
+
+        # Save to the same date the roster is showing (so it updates what users see)
+        target_date = roster_target_date(ny_now).strftime('%Y-%m-%d')
+
+        user_id = session['user_id']
         cur = conn.cursor()
-
-        # keep cleanup of very old rows
-        cutoff = (ny_now.date() - timedelta(days=10)).strftime('%Y-%m-%d')
-        cur.execute('DELETE FROM perstat WHERE date < %s', (cutoff,))
-
         cur.execute('SELECT * FROM perstat WHERE user_id = %s AND date = %s', (user_id, target_date))
         existing = cur.fetchone()
 
@@ -400,25 +303,29 @@ def submit():
                         (user_id, target_date, status, comment))
         conn.commit()
         cur.close()
+
         flash('Submitted successfully!')
         return redirect(url_for('roster'))
     return render_template('submit.html')
 
-# ---------------------- Roster (NY cycle) ----------------------
+# ---------------------- Roster (NY 5pm cycle) ----------------------
 @app.route('/roster')
 @login_required
 def roster():
     ensure_leaves_table()
 
     conn = get_db()
-    cur = conn.cursor()
-
     ny_now = now_ny()
-    # Show today's roster before 5pm; show tomorrow at/after 5pm
+
+    # cleanup at 5pm rollover
+    cleanup_perstat_rollover(conn, ny_now)
+
+    # Active roster date (today before 5pm, tomorrow at/after 5pm)
     target_date_obj = roster_target_date(ny_now)
     target_date_str = target_date_obj.strftime('%Y-%m-%d')
     date_compact, weekday = fmt_day_header(target_date_obj)
 
+    cur = conn.cursor()
     cur.execute('SELECT * FROM users')
     users = cur.fetchall()
 
@@ -655,7 +562,7 @@ def update_user(user_id):
     flash("User updated.")
     return redirect(url_for('view_users'))
 
-# ---------------------- AI Summary (NY cycle) ----------------------
+# ---------------------- AI Summary (NY 5pm cycle) ----------------------
 @app.route('/ai_summary')
 @login_required
 def ai_summary():
@@ -673,7 +580,7 @@ def generate_ai_summary():
     cur = conn.cursor()
 
     ny_now = now_ny()
-    # Generate for the same target date the roster shows (5pm rule)
+    # Same target date as roster (5pm rule)
     target_date_obj = roster_target_date(ny_now)
     date_db = target_date_obj.strftime('%Y-%m-%d')
     date_compact, weekday = fmt_day_header(target_date_obj)
@@ -763,7 +670,7 @@ def generate_ai_summary():
         ON CONFLICT (date) DO UPDATE SET summary = EXCLUDED.summary
     ''', (date_db, final_summary, now_ny().strftime('%Y-%m-%d %H:%M:%S')))
 
-    two_days_ago = (today_ny() - timedelta(days=2)).strftime('%Y-%m-%d')
+    two_days_ago = (now_ny().date() - timedelta(days=2)).strftime('%Y-%m-%d')
     cur.execute('DELETE FROM ai_summaries WHERE date < %s', (two_days_ago,))
     conn.commit()
     cur.close()
@@ -792,13 +699,11 @@ if os.environ.get('AUTO_INIT_DB') == 'true':
             conn.commit()
             cur.close()
             ensure_leaves_table()
-            ensure_auth_tokens_table()
     init_db()
 else:
     with app.app_context():
         try:
             ensure_leaves_table()
-            ensure_auth_tokens_table()
         except Exception:
             pass
 
