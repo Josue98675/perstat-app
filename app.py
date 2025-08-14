@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, render_template, request, redirect, session, url_for, g, flash, Response
-import psycopg2, os, csv, json
+import psycopg2, os, csv, json, secrets
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, date
 from functools import wraps
@@ -23,9 +23,14 @@ from datetime import timedelta as _td
 app.config['PERMANENT_SESSION_LIFETIME'] = _td(days=365*100)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 
-# Cookie settings (required for PWAs / HTTPS)
+# Cookie settings (PWA + iOS Home Screen friendly)
 app.config['SESSION_COOKIE_SECURE'] = True       # only send over HTTPS
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'   # allow PWA scenarios
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'    # iOS standalone likes Lax more than None
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_PATH'] = '/'
+
+REMEMBER_COOKIE_NAME = "remember_token"
+REMEMBER_COOKIE_MAX_DAYS = 3650  # ~10 years
 
 # Always mark the session as permanent once a user has logged in
 @app.before_request
@@ -38,7 +43,7 @@ APP_TZ = ZoneInfo("America/New_York")
 
 # Cutoffs (NY time)
 ROSTER_ROLLOVER_HOUR = 17  # 5pm -> roster shows tomorrow
-SUBMIT_NEXTDAY_HOUR = 18    # 6pm -> submissions go to tomorrow
+SUBMIT_NEXTDAY_HOUR = 18   # 6pm -> submissions go to tomorrow
 
 # ---- Labels / helpers ----
 SECTIONS_ORDER = [
@@ -126,6 +131,20 @@ def ensure_leaves_table():
     conn.commit()
     cur.close()
 
+def ensure_auth_tokens_table():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT now(),
+            last_seen TIMESTAMP
+        );
+    """)
+    conn.commit()
+    cur.close()
+
 def all_users_submitted(conn, target_date_str):
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM users")
@@ -154,6 +173,65 @@ def login_required(f):
 def enforce_https_in_production():
     if os.environ.get('FLASK_ENV') == 'production' and request.headers.get('X-Forwarded-Proto', 'http') != 'https':
         return redirect(request.url.replace('http://', 'https://', 1))
+
+# ---- Remember-token helpers ----
+def set_remember_token(resp, user_id):
+    """Create a long-lived token, store in DB, set cookie."""
+    token = secrets.token_urlsafe(32)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO auth_tokens (token, user_id) VALUES (%s, %s) ON CONFLICT (token) DO NOTHING",
+        (token, user_id)
+    )
+    conn.commit()
+    cur.close()
+
+    max_age = REMEMBER_COOKIE_MAX_DAYS * 24 * 60 * 60
+    resp.set_cookie(
+        REMEMBER_COOKIE_NAME,
+        token,
+        max_age=max_age,
+        secure=True,
+        httponly=True,
+        samesite='Lax',
+        path='/'
+    )
+
+def clear_remember_token(resp, token_value):
+    """Delete token from DB and clear cookie."""
+    if token_value:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM auth_tokens WHERE token = %s", (token_value,))
+        conn.commit()
+        cur.close()
+    resp.delete_cookie(REMEMBER_COOKIE_NAME, path='/')
+
+def restore_session_from_token():
+    """If Flask session is gone, try to restore it using the remember_token cookie."""
+    if 'user_id' in session:
+        return
+    token = request.cookies.get(REMEMBER_COOKIE_NAME)
+    if not token:
+        return
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM auth_tokens WHERE token = %s", (token,))
+    row = cur.fetchone()
+    if row:
+        cur.execute("UPDATE auth_tokens SET last_seen = now() WHERE token = %s", (token,))
+        conn.commit()
+        session['user_id'] = row['user_id']
+        session.permanent = True
+        cur.execute("SELECT is_admin FROM users WHERE id = %s", (row['user_id'],))
+        u = cur.fetchone()
+        session['is_admin'] = (u['is_admin'] if u else False)
+    cur.close()
+
+@app.before_request
+def try_restore_session():
+    restore_session_from_token()
 
 # ---------------------- Push ----------------------
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
@@ -230,12 +308,23 @@ def login():
                 session['user_id'] = user['id']
                 session['is_admin'] = user['is_admin']
                 session.permanent = True
-                return redirect(url_for('roster'))
+                # Set remember_token cookie + DB row
+                resp = redirect(url_for('roster'))
+                set_remember_token(resp, user['id'])
+                return resp
             flash('Login failed. Check name & PIN.')
         except Exception as e:
             print("❌ Login Error:", e)
             flash('Login failed due to internal error.')
     return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    token = request.cookies.get(REMEMBER_COOKIE_NAME)
+    session.clear()
+    resp = redirect(url_for('login'))
+    clear_remember_token(resp, token)
+    return resp
 
 # Manual AI summary trigger
 @app.route('/admin/generate_summary', methods=['GET', 'POST'])
@@ -703,11 +792,13 @@ if os.environ.get('AUTO_INIT_DB') == 'true':
             conn.commit()
             cur.close()
             ensure_leaves_table()
+            ensure_auth_tokens_table()
     init_db()
 else:
     with app.app_context():
         try:
             ensure_leaves_table()
+            ensure_auth_tokens_table()
         except Exception:
             pass
 
